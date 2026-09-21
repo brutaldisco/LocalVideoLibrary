@@ -7,7 +7,6 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["icons/*.png"],
       manifest: {
         id: "/",
         name: "lvl",
@@ -20,19 +19,19 @@ export default defineConfig({
         background_color: "#111111",
         icons: [
           {
-            src: "icons/icon-192-lv.png",
+            src: "icons/icon-192-poppins.png",
             sizes: "192x192",
             type: "image/png",
             purpose: "any",
           },
           {
-            src: "icons/icon-512-lv.png",
+            src: "icons/icon-512-poppins.png",
             sizes: "512x512",
             type: "image/png",
             purpose: "any",
           },
           {
-            src: "icons/icon-maskable-512-lv.png",
+            src: "icons/icon-maskable-512-poppins.png",
             sizes: "512x512",
             type: "image/png",
             purpose: "maskable",
@@ -40,10 +39,26 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
+        globPatterns: ["**/*.{js,css,html,ico,svg,woff2}"],
+        globIgnores: ["**/icons/**"],
         navigateFallback: "/index.html",
         cleanupOutdatedCaches: true,
-        runtimeCaching: [],
+        runtimeCaching: [
+          {
+            urlPattern: /^\/icons\/.+\.png$/i,
+            handler: "NetworkFirst",
+            options: {
+              cacheName: "pwa-icons",
+              expiration: {
+                maxEntries: 10,
+                maxAgeSeconds: 60 * 60 * 24 * 7,
+              },
+              cacheableResponse: {
+                statuses: [0, 200],
+              },
+            },
+          },
+        ],
       },
     }),
   ],

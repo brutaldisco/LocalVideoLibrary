@@ -58,13 +58,11 @@ select {
 
 .sidebar-header h1 {
   margin: 0;
-  font-family: "DM Serif Display", Georgia, "Times New Roman", serif;
-  font-size: 1.05rem;
-  font-weight: 300;
-  font-synthesis: none;
-  -webkit-font-smoothing: antialiased;
-  letter-spacing: 0.02em;
-  color: rgba(243, 244, 246, 0.92);
+  font-family: "Poppins", system-ui, sans-serif;
+  font-size: 0.95rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: #f3f4f6;
 }
 
 .sidebar-subtitle {
