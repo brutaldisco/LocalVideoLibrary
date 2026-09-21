@@ -8,6 +8,11 @@ import {
   validateFolderPath,
   validateVideoFileName,
 } from "./file-helpers";
+import {
+  parseThumbSidecar,
+  serializeThumbSidecar,
+  thumbSidecarName,
+} from "./video-thumb-sidecar";
 import { idbGet, idbSet, ROOT_HANDLE_KEY } from "./idb";
 import type {
   ScanProgress,
@@ -207,6 +212,83 @@ async function moveFileBetweenDirs(
   await sourceDir.removeEntry(sourceName);
 }
 
+async function readSidecarSeekSeconds(
+  parent: FileSystemDirectoryHandle,
+  videoName: string,
+): Promise<number | undefined> {
+  try {
+    const handle = await parent.getFileHandle(thumbSidecarName(videoName));
+    const file = await handle.getFile();
+    return parseThumbSidecar(await file.text());
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeSidecarSeekSeconds(
+  parent: FileSystemDirectoryHandle,
+  videoName: string,
+  seconds: number,
+): Promise<void> {
+  const handle = await parent.getFileHandle(thumbSidecarName(videoName), {
+    create: true,
+  });
+  const writable = await handle.createWritable();
+  try {
+    await writable.write(serializeThumbSidecar(seconds));
+    await writable.close();
+  } catch (error) {
+    await writable.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+async function deleteSidecarIfExists(
+  parent: FileSystemDirectoryHandle,
+  videoName: string,
+): Promise<void> {
+  try {
+    await parent.removeEntry(thumbSidecarName(videoName));
+  } catch {
+    // Sidecar is optional.
+  }
+}
+
+async function renameSidecarIfExists(
+  parent: FileSystemDirectoryHandle,
+  oldVideoName: string,
+  nextVideoName: string,
+): Promise<void> {
+  const oldName = thumbSidecarName(oldVideoName);
+  if (!(await fileExists(parent, oldName))) {
+    return;
+  }
+  const nextName = thumbSidecarName(nextVideoName);
+  if (await fileExists(parent, nextName)) {
+    await parent.removeEntry(nextName);
+  }
+  const sourceHandle = await parent.getFileHandle(oldName);
+  await copyFileHandle(sourceHandle, parent, nextName);
+  await parent.removeEntry(oldName);
+}
+
+async function moveSidecarIfExists(
+  sourceDir: FileSystemDirectoryHandle,
+  videoName: string,
+  targetDir: FileSystemDirectoryHandle,
+): Promise<void> {
+  const sidecarName = thumbSidecarName(videoName);
+  if (!(await fileExists(sourceDir, sidecarName))) {
+    return;
+  }
+  if (await fileExists(targetDir, sidecarName)) {
+    await targetDir.removeEntry(sidecarName);
+  }
+  const sourceHandle = await sourceDir.getFileHandle(sidecarName);
+  await copyFileHandle(sourceHandle, targetDir, sidecarName);
+  await sourceDir.removeEntry(sidecarName);
+}
+
 async function moveDirectoryContents(
   sourceDir: FileSystemDirectoryHandle,
   targetDir: FileSystemDirectoryHandle,
@@ -350,6 +432,25 @@ class DirectoryVideoAdapter implements VideoStorageAdapter {
     return URL.createObjectURL(file);
   }
 
+  async loadThumbSeekSeconds(
+    entry: VideoFileEntry,
+  ): Promise<number | undefined> {
+    const parent = await resolveDirectoryHandle(this.root, entry.folderPath);
+    return readSidecarSeekSeconds(parent, entry.name);
+  }
+
+  async saveThumbSeekSeconds(
+    entry: VideoFileEntry,
+    seconds: number,
+  ): Promise<void> {
+    if (!Number.isFinite(seconds) || seconds < 0) {
+      throw new Error("Invalid thumbnail seek position");
+    }
+    await this.requireWrite();
+    const parent = await resolveDirectoryHandle(this.root, entry.folderPath);
+    await writeSidecarSeekSeconds(parent, entry.name, seconds);
+  }
+
   async canWrite(): Promise<boolean> {
     return ensureWritePermission(this.root);
   }
@@ -364,6 +465,7 @@ class DirectoryVideoAdapter implements VideoStorageAdapter {
     await this.requireWrite();
     for (const entry of entries) {
       const parent = await resolveDirectoryHandle(this.root, entry.folderPath);
+      await deleteSidecarIfExists(parent, entry.name);
       await parent.removeEntry(entry.name);
     }
   }
@@ -381,6 +483,7 @@ class DirectoryVideoAdapter implements VideoStorageAdapter {
     const sourceHandle = await parent.getFileHandle(entry.name);
     await copyFileHandle(sourceHandle, parent, nextName);
     try {
+      await renameSidecarIfExists(parent, entry.name, nextName);
       await parent.removeEntry(entry.name);
     } catch (error) {
       throw new Error(
@@ -405,6 +508,7 @@ class DirectoryVideoAdapter implements VideoStorageAdapter {
     for (const entry of entries) {
       const sourceDir = await resolveDirectoryHandle(this.root, entry.folderPath);
       await moveFileBetweenDirs(sourceDir, entry.name, targetDir, entry.name);
+      await moveSidecarIfExists(sourceDir, entry.name, targetDir);
     }
   }
 
@@ -523,6 +627,35 @@ class FolderInputVideoAdapter implements VideoStorageAdapter {
       throw new Error(`File not found: ${entry.path}`);
     }
     return URL.createObjectURL(entry.file);
+  }
+
+  async loadThumbSeekSeconds(
+    entry: VideoFileEntry,
+  ): Promise<number | undefined> {
+    const sidecarPath = joinFolderPath(
+      entry.folderPath,
+      thumbSidecarName(entry.name),
+    );
+    const sidecarFile = this.files.find((file) => {
+      const folderPath = normalizeFolderPath(
+        file.webkitRelativePath
+          ? file.webkitRelativePath.split("/").slice(0, -1).join("/")
+          : "",
+      );
+      const path = joinFolderPath(folderPath, file.name);
+      return path === sidecarPath;
+    });
+    if (!sidecarFile) {
+      return undefined;
+    }
+    return parseThumbSidecar(await sidecarFile.text());
+  }
+
+  async saveThumbSeekSeconds(
+    _entry: VideoFileEntry,
+    _seconds: number,
+  ): Promise<void> {
+    this.denyWrite();
   }
 
   async canWrite(): Promise<boolean> {

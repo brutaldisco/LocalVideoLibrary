@@ -50,6 +50,8 @@ export interface VideoStorageAdapter {
   readonly rootName: string;
   scan(onProgress?: (progress: ScanProgress) => void): Promise<ScanResult>;
   createObjectUrl(entry: VideoFileEntry): Promise<string>;
+  loadThumbSeekSeconds(entry: VideoFileEntry): Promise<number | undefined>;
+  saveThumbSeekSeconds(entry: VideoFileEntry, seconds: number): Promise<void>;
   canWrite(): Promise<boolean>;
   deleteVideos(entries: VideoFileEntry[]): Promise<void>;
   renameVideo(entry: VideoFileEntry, nextName: string): Promise<void>;

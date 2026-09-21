@@ -28,8 +28,6 @@ import {
   formatBytes,
   formatDate,
   formatDuration,
-  joinFolderPath,
-  parentFolderPath,
   PAGE_SIZE,
   sortVideos,
 } from "./lib/file-helpers";
@@ -45,13 +43,9 @@ import type {
 } from "./lib/types";
 import { loadVideoMeta, loadVideoMetaBatch } from "./lib/video-thumb";
 import {
-  loadThumbPositions,
-  migrateThumbPosition,
-  migrateThumbPositionPrefix,
-  removeThumbPositions,
-  removeThumbPositionsUnderPrefix,
-  saveThumbPosition,
-} from "./lib/video-thumb-positions";
+  loadThumbPositionsFromVideos,
+  migrateLegacyThumbPositionsToSidecars,
+} from "./lib/video-thumb-sidecar";
 import {
   folderPlaylist,
   playlistIndex,
@@ -139,6 +133,16 @@ export default function App() {
       setVisibleCount(PAGE_SIZE);
       setMetaMap(new Map());
       setSelectedFolder(undefined);
+      const loadedPositions = await loadThumbPositionsFromVideos(
+        nextAdapter,
+        result.videos,
+      );
+      const thumbPositions = await migrateLegacyThumbPositionsToSidecars(
+        nextAdapter,
+        result.videos,
+        loadedPositions,
+      );
+      setThumbPositions(thumbPositions);
       const canWrite = await nextAdapter.canWrite();
       setWritable(canWrite);
       setNeedsPermission(false);
@@ -191,10 +195,6 @@ export default function App() {
       cancelled = true;
     };
   }, [runScan]);
-
-  useEffect(() => {
-    void loadThumbPositions().then(setThumbPositions);
-  }, []);
 
   useEffect(() => {
     setThumbnailSaved(false);
@@ -457,7 +457,7 @@ export default function App() {
     setErrorMessage(null);
     try {
       const seekSeconds = Math.max(0, currentTime);
-      await saveThumbPosition(playing.id, seekSeconds);
+      await adapter.saveThumbSeekSeconds(playing, seekSeconds);
       setThumbPositions((current) => {
         const next = new Map(current);
         next.set(playing.id, seekSeconds);
@@ -548,62 +548,33 @@ export default function App() {
       return;
     }
     switch (dialog.type) {
-      case "rename-video": {
-        const oldId = dialog.entry.id;
-        const newId = joinFolderPath(
-          dialog.entry.folderPath,
-          dialogValue.trim(),
-        );
+      case "rename-video":
         await runWriteAction(async () => {
           await adapter.renameVideo(dialog.entry, dialogValue.trim());
-          await migrateThumbPosition(oldId, newId);
         });
-        setThumbPositions(await loadThumbPositions());
         break;
-      }
-      case "move-videos": {
-        const targetFolder = dialogValue.trim();
+      case "move-videos":
         await runWriteAction(async () => {
-          await adapter.moveVideos(dialog.entries, targetFolder);
-          for (const entry of dialog.entries) {
-            await migrateThumbPosition(
-              entry.id,
-              joinFolderPath(targetFolder, entry.name),
-            );
-          }
+          await adapter.moveVideos(dialog.entries, dialogValue.trim());
         });
-        setThumbPositions(await loadThumbPositions());
         break;
-      }
       case "delete-videos":
         await runWriteAction(async () => {
           await adapter.deleteVideos(dialog.entries);
-          await removeThumbPositions(dialog.entries.map((entry) => entry.id));
         });
-        setThumbPositions(await loadThumbPositions());
         break;
       case "create-folder":
         await runWriteAction(() => adapter.createFolder(dialogValue.trim()));
         break;
-      case "rename-folder": {
-        const oldPrefix = dialog.folderPath;
-        const newPrefix = joinFolderPath(
-          parentFolderPath(oldPrefix),
-          dialogValue.trim(),
-        );
+      case "rename-folder":
         await runWriteAction(async () => {
           await adapter.renameFolder(dialog.folderPath, dialogValue.trim());
-          await migrateThumbPositionPrefix(oldPrefix, newPrefix);
         });
-        setThumbPositions(await loadThumbPositions());
         break;
-      }
       case "delete-folder":
         await runWriteAction(async () => {
           await adapter.deleteFolder(dialog.folderPath);
-          await removeThumbPositionsUnderPrefix(dialog.folderPath);
         });
-        setThumbPositions(await loadThumbPositions());
         break;
       default:
         break;
