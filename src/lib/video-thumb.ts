@@ -60,7 +60,6 @@ async function loadVideoMetaFromUrl(
   duration?: number;
   thumbUrl?: string;
   thumbSeekSeconds?: number;
-  customThumb?: boolean;
 }> {
   const video = document.createElement("video");
   video.preload = "metadata";
@@ -72,7 +71,6 @@ async function loadVideoMetaFromUrl(
     await waitForEvent(video, "loadedmetadata");
     const duration = Number.isFinite(video.duration) ? video.duration : undefined;
     const resolvedSeek = resolveThumbSeekSeconds(duration, seekSeconds);
-    const customThumb = seekSeconds != null;
 
     let thumbUrl: string | undefined;
     try {
@@ -99,7 +97,6 @@ async function loadVideoMetaFromUrl(
       duration,
       thumbUrl,
       thumbSeekSeconds: resolvedSeek,
-      customThumb,
     };
   } finally {
     video.removeAttribute("src");

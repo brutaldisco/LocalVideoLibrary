@@ -27,7 +27,6 @@ export interface VideoMeta {
   duration?: number;
   thumbUrl?: string;
   failed?: boolean;
-  customThumb?: boolean;
   thumbSeekSeconds?: number;
 }
 

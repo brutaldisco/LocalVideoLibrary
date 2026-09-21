@@ -473,7 +473,6 @@ export default function App() {
         next.set(playing.id, {
           ...next.get(playing.id),
           ...meta,
-          customThumb: true,
           thumbSeekSeconds: seekSeconds,
         });
         return next;
@@ -629,12 +628,12 @@ export default function App() {
           )}
           <button
             type="button"
-            className="btn"
+            className="btn icon"
+            aria-label="Refresh"
             disabled={!adapter || scanning}
             onClick={() => adapter && void runScan(adapter)}
           >
             <RefreshCw size={16} />
-            Refresh
           </button>
         </div>
 
@@ -831,11 +830,11 @@ export default function App() {
             </p>
             <button
               type="button"
-              className="btn"
+              className="btn icon"
+              aria-label="Rescan"
               onClick={() => adapter && void runScan(adapter)}
             >
               <RefreshCw size={16} />
-              Rescan
             </button>
           </div>
         ) : (
@@ -872,9 +871,6 @@ export default function App() {
                         <span className="duration-badge">
                           {formatDuration(meta?.duration)}
                         </span>
-                        {meta?.customThumb ? (
-                          <span className="custom-thumb-badge">Custom</span>
-                        ) : null}
                       </div>
                       <div className="video-meta">
                         <strong>{entry.name}</strong>
