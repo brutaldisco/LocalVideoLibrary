@@ -1,4 +1,5 @@
 import {
+  ChevronDown,
   Download,
   FolderInput,
   FolderOpen,
@@ -88,6 +89,8 @@ export default function App() {
   const [adapter, setAdapter] = useState<VideoStorageAdapter | null>(null);
   const [libraries, setLibraries] = useState<SavedLibrary[]>([]);
   const [activeLibraryId, setActiveLibraryId] = useState<string | null>(null);
+  const [libraryPickerOpen, setLibraryPickerOpen] = useState(false);
+  const libraryPickerRef = useRef<HTMLDivElement>(null);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState({
@@ -215,6 +218,23 @@ export default function App() {
       cancelled = true;
     };
   }, [refreshLibraries, runScan]);
+
+  useEffect(() => {
+    setLibraryPickerOpen(false);
+  }, [activeLibraryId]);
+
+  useEffect(() => {
+    if (!libraryPickerOpen) {
+      return;
+    }
+    const onPointerDown = (event: MouseEvent) => {
+      if (!libraryPickerRef.current?.contains(event.target as Node)) {
+        setLibraryPickerOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", onPointerDown);
+    return () => window.removeEventListener("mousedown", onPointerDown);
+  }, [libraryPickerOpen]);
 
   useEffect(() => {
     setThumbnailSaved(false);
@@ -649,63 +669,64 @@ export default function App() {
 
   const hasMore = visibleCount < filteredVideos.length;
   const readOnly = adapter != null && !writable;
+  const activeLibrary =
+    libraries.find((library) => library.id === activeLibraryId) ?? null;
+  const otherLibraries = libraries.filter(
+    (library) => library.id !== activeLibraryId,
+  );
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-header">
           <h1>Local Video Library</h1>
-          <p className="sidebar-subtitle">
-            {adapter ? adapter.rootName : "No folder selected"}
-          </p>
-        </div>
-
-        <div className="sidebar-actions">
-          {supportsDirectoryPicker() ? (
-            <>
-              <button
-                type="button"
-                className="btn icon outline"
-                aria-label="Open folder"
-                onClick={() => void handleOpenDirectory()}
-              >
-                <FolderOpen size={16} />
-              </button>
-              {needsPermission ? (
-                <button type="button" className="btn" onClick={() => void handleRelink()}>
-                  Re-link folder
+          <div className="sidebar-actions">
+            {supportsDirectoryPicker() ? (
+              <>
+                <button
+                  type="button"
+                  className="btn icon outline"
+                  aria-label="Open folder"
+                  onClick={() => void handleOpenDirectory()}
+                >
+                  <FolderOpen size={16} />
                 </button>
-              ) : null}
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                className="btn outline"
-                onClick={() => folderInputRef.current?.click()}
-              >
-                <FolderInput size={16} />
-                Choose folder
-              </button>
-              <input
-                ref={folderInputRef}
-                type="file"
-                multiple
-                hidden
-                {...{ webkitdirectory: "", directory: "" }}
-                onChange={handleFolderInputChange}
-              />
-            </>
-          )}
-          <button
-            type="button"
-            className="btn icon"
-            aria-label="Refresh"
-            disabled={!adapter || scanning}
-            onClick={() => adapter && void runScan(adapter)}
-          >
-            <RefreshCw size={16} />
-          </button>
+                {needsPermission ? (
+                  <button type="button" className="btn" onClick={() => void handleRelink()}>
+                    Re-link folder
+                  </button>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="btn outline"
+                  onClick={() => folderInputRef.current?.click()}
+                >
+                  <FolderInput size={16} />
+                  Choose folder
+                </button>
+                <input
+                  ref={folderInputRef}
+                  type="file"
+                  multiple
+                  hidden
+                  {...{ webkitdirectory: "", directory: "" }}
+                  onChange={handleFolderInputChange}
+                />
+              </>
+            )}
+            <button
+              type="button"
+              className="btn icon"
+              aria-label="Refresh"
+              disabled={!adapter || scanning}
+              onClick={() => adapter && void runScan(adapter)}
+            >
+              <RefreshCw size={16} />
+            </button>
+          </div>
         </div>
 
         {readOnly ? (
@@ -714,29 +735,54 @@ export default function App() {
           </p>
         ) : null}
 
-        {libraries.length > 0 ? (
-          <div className="library-panel">
-            <h2>Opened folders</h2>
-            <div className="library-list">
-              {libraries.map((library) => (
-                <div
-                  key={library.id}
-                  className={`folder-row ${library.id === activeLibraryId ? "active" : ""}`}
-                >
-                  <button
-                    type="button"
-                    className="folder-item"
-                    onClick={() => void handleSelectLibrary(library)}
-                  >
-                    <span className="folder-item-name">{library.name}</span>
-                  </button>
-                  <FolderRowMenu
-                    deleteLabel="Remove"
-                    onDelete={() => void handleRemoveLibrary(library.id)}
-                  />
-                </div>
-              ))}
+        {activeLibrary ? (
+          <div className="library-panel" ref={libraryPickerRef}>
+            <div
+              className={`folder-row library-current ${libraryPickerOpen ? "active" : ""}`}
+            >
+              <button
+                type="button"
+                className="folder-item"
+                aria-expanded={libraryPickerOpen}
+                aria-haspopup="listbox"
+                onClick={() => {
+                  if (otherLibraries.length > 0) {
+                    setLibraryPickerOpen((current) => !current);
+                  }
+                }}
+              >
+                <span className="folder-item-name">{activeLibrary.name}</span>
+              </button>
+              {otherLibraries.length > 0 ? (
+                <ChevronDown
+                  size={14}
+                  className={`library-chevron ${libraryPickerOpen ? "is-open" : ""}`}
+                  aria-hidden="true"
+                />
+              ) : null}
+              <FolderRowMenu
+                deleteLabel="Remove"
+                onDelete={() => void handleRemoveLibrary(activeLibrary.id)}
+              />
             </div>
+            {libraryPickerOpen && otherLibraries.length > 0 ? (
+              <div className="library-picker-list" role="listbox">
+                {otherLibraries.map((library) => (
+                  <button
+                    key={library.id}
+                    type="button"
+                    role="option"
+                    className="library-picker-item"
+                    onClick={() => {
+                      setLibraryPickerOpen(false);
+                      void handleSelectLibrary(library);
+                    }}
+                  >
+                    {library.name}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
         ) : null}
 

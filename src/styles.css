@@ -56,8 +56,18 @@ select {
   min-width: 0;
 }
 
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
 .sidebar-header h1 {
   margin: 0;
+  min-width: 0;
+  flex: 1;
   font-family: "Poppins", system-ui, sans-serif;
   font-size: 0.95rem;
   font-weight: 500;
@@ -65,17 +75,11 @@ select {
   color: #f3f4f6;
 }
 
-.sidebar-subtitle {
-  margin: 4px 0 0;
-  color: var(--muted);
-  font-size: 0.85rem;
-  word-break: break-word;
-}
-
 .sidebar-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
 }
 
 .main-panel {
@@ -200,20 +204,49 @@ select {
 .library-panel {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
 }
 
-.library-panel h2 {
-  margin: 0;
-  font-size: 0.95rem;
+.library-current {
+  cursor: pointer;
 }
 
-.library-list {
+.library-chevron {
+  flex-shrink: 0;
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+
+.library-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.library-picker-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  max-height: 180px;
-  overflow: auto;
+  gap: 2px;
+  margin-left: 10px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+}
+
+.library-picker-item {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  border-radius: 8px;
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-picker-item:hover {
+  background: var(--panel-2);
 }
 
 .folder-panel {
