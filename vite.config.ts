@@ -9,6 +9,7 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["icons/*.png"],
       manifest: {
+        id: "/",
         name: "lvl",
         short_name: "lvl",
         description: "Local Video Library — browse and manage local video folders in your browser",
@@ -19,17 +20,19 @@ export default defineConfig({
         background_color: "#111111",
         icons: [
           {
-            src: "icons/icon-192.png",
+            src: "icons/icon-192-lv.png",
             sizes: "192x192",
             type: "image/png",
+            purpose: "any",
           },
           {
-            src: "icons/icon-512.png",
+            src: "icons/icon-512-lv.png",
             sizes: "512x512",
             type: "image/png",
+            purpose: "any",
           },
           {
-            src: "icons/icon-maskable-512.png",
+            src: "icons/icon-maskable-512-lv.png",
             sizes: "512x512",
             type: "image/png",
             purpose: "maskable",
@@ -39,6 +42,7 @@ export default defineConfig({
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
         navigateFallback: "/index.html",
+        cleanupOutdatedCaches: true,
         runtimeCaching: [],
       },
     }),
