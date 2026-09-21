@@ -31,6 +31,13 @@ import {
   PAGE_SIZE,
   sortVideos,
 } from "./lib/file-helpers";
+import {
+  activateLibrary,
+  loadActiveLibrary,
+  loadSavedLibraries,
+  removeSavedLibrary,
+  type SavedLibrary,
+} from "./lib/library-roots";
 import type {
   RepeatMode,
   ScanResult,
@@ -57,7 +64,6 @@ import {
   ensureReadPermission,
   loadSavedRootHandle,
   pickDirectoryRoot,
-  restoreDirectoryAdapter,
   supportsDirectoryPicker,
 } from "./lib/video-storage";
 
@@ -80,6 +86,8 @@ const META_BATCH_SIZE = 80;
 export default function App() {
   const folderInputRef = useRef<HTMLInputElement>(null);
   const [adapter, setAdapter] = useState<VideoStorageAdapter | null>(null);
+  const [libraries, setLibraries] = useState<SavedLibrary[]>([]);
+  const [activeLibraryId, setActiveLibraryId] = useState<string | null>(null);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState({
@@ -173,17 +181,29 @@ export default function App() {
     [runScan],
   );
 
+  const refreshLibraries = useCallback(async () => {
+    const items = await loadSavedLibraries();
+    const active = await loadActiveLibrary();
+    setLibraries(items);
+    setActiveLibraryId(active?.id ?? null);
+    return active;
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     async function bootstrap() {
+      const active = await refreshLibraries();
       if (!supportsDirectoryPicker()) {
         setStatusMessage(
           "This browser uses read-only folder selection. File management is disabled.",
         );
         return;
       }
-      const restored = await restoreDirectoryAdapter();
-      if (!restored || cancelled) {
+      if (!active || cancelled) {
+        return;
+      }
+      const restored = createDirectoryAdapter(active.handle);
+      if (cancelled) {
         return;
       }
       setAdapter(restored);
@@ -194,7 +214,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [runScan]);
+  }, [refreshLibraries, runScan]);
 
   useEffect(() => {
     setThumbnailSaved(false);
@@ -351,6 +371,8 @@ export default function App() {
     setErrorMessage(null);
     try {
       const handle = await pickDirectoryRoot();
+      await refreshLibraries();
+      setPlaying(null);
       await attachAdapter(createDirectoryAdapter(handle));
     } catch (error) {
       if ((error as { name?: string }).name === "AbortError") {
@@ -360,6 +382,51 @@ export default function App() {
         error instanceof Error ? error.message : "Could not open folder",
       );
     }
+  }
+
+  async function handleSelectLibrary(library: SavedLibrary) {
+    if (library.id === activeLibraryId && adapter) {
+      return;
+    }
+    setErrorMessage(null);
+    try {
+      const granted = await ensureReadPermission(library.handle);
+      if (!granted) {
+        setNeedsPermission(true);
+        setErrorMessage("Folder access was not granted.");
+        return;
+      }
+      await activateLibrary(library.id);
+      setActiveLibraryId(library.id);
+      setPlaying(null);
+      await attachAdapter(createDirectoryAdapter(library.handle));
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Could not open folder",
+      );
+    }
+  }
+
+  async function handleRemoveLibrary(id: string) {
+    setErrorMessage(null);
+    const wasActive = id === activeLibraryId;
+    const { libraries: nextLibraries, active } = await removeSavedLibrary(id);
+    setLibraries(nextLibraries);
+    setActiveLibraryId(active?.id ?? null);
+    if (!wasActive) {
+      return;
+    }
+    setPlaying(null);
+    if (!active) {
+      setAdapter(null);
+      setScanResult(null);
+      setMetaMap(new Map());
+      setThumbPositions(new Map());
+      setWritable(false);
+      setStatusMessage("No folder selected.");
+      return;
+    }
+    await attachAdapter(createDirectoryAdapter(active.handle));
   }
 
   async function handleRelink() {
@@ -596,9 +663,13 @@ export default function App() {
         <div className="sidebar-actions">
           {supportsDirectoryPicker() ? (
             <>
-              <button type="button" className="btn outline" onClick={() => void handleOpenDirectory()}>
+              <button
+                type="button"
+                className="btn icon outline"
+                aria-label="Open folder"
+                onClick={() => void handleOpenDirectory()}
+              >
                 <FolderOpen size={16} />
-                Open folder
               </button>
               {needsPermission ? (
                 <button type="button" className="btn" onClick={() => void handleRelink()}>
@@ -641,6 +712,32 @@ export default function App() {
           <p className="notice">
             Read-only mode. Rename, move, and delete are disabled.
           </p>
+        ) : null}
+
+        {libraries.length > 0 ? (
+          <div className="library-panel">
+            <h2>Opened folders</h2>
+            <div className="library-list">
+              {libraries.map((library) => (
+                <div
+                  key={library.id}
+                  className={`folder-row ${library.id === activeLibraryId ? "active" : ""}`}
+                >
+                  <button
+                    type="button"
+                    className="folder-item"
+                    onClick={() => void handleSelectLibrary(library)}
+                  >
+                    <span className="folder-item-name">{library.name}</span>
+                  </button>
+                  <FolderRowMenu
+                    deleteLabel="Remove"
+                    onDelete={() => void handleRemoveLibrary(library.id)}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
         ) : null}
 
         <div className="folder-panel">
@@ -805,7 +902,7 @@ export default function App() {
               uploaded or cached in the browser.
             </p>
             {supportsDirectoryPicker() ? (
-              <button type="button" className="btn primary" onClick={() => void handleOpenDirectory()}>
+              <button type="button" className="btn outline" onClick={() => void handleOpenDirectory()}>
                 <FolderOpen size={16} />
                 Open folder
               </button>

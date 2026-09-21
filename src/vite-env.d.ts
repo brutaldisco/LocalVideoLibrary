@@ -12,6 +12,7 @@ interface FileSystemCreateWritableOptions {
 interface FileSystemHandle {
   readonly kind: "file" | "directory";
   readonly name: string;
+  isSameEntry?(other: FileSystemHandle): Promise<boolean>;
   queryPermission?(
     descriptor?: FileSystemHandlePermissionDescriptor,
   ): Promise<PermissionState>;

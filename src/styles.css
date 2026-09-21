@@ -197,6 +197,25 @@ select {
   color: var(--danger);
 }
 
+.library-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.library-panel h2 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.library-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  overflow: auto;
+}
+
 .folder-panel {
   display: flex;
   flex-direction: column;

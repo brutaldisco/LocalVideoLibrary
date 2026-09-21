@@ -4,9 +4,11 @@ import { useEffect, useRef, useState } from "react";
 export function FolderRowMenu({
   onRename,
   onDelete,
+  deleteLabel = "Delete",
 }: {
-  onRename: () => void;
+  onRename?: () => void;
   onDelete: () => void;
+  deleteLabel?: string;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -42,17 +44,19 @@ export function FolderRowMenu({
       </button>
       {open ? (
         <div className="folder-row-menu" role="menu">
-          <button
-            type="button"
-            role="menuitem"
-            className="folder-row-menu-item"
-            onClick={() => {
-              onRename();
-              setOpen(false);
-            }}
-          >
-            Rename
-          </button>
+          {onRename ? (
+            <button
+              type="button"
+              role="menuitem"
+              className="folder-row-menu-item"
+              onClick={() => {
+                onRename();
+                setOpen(false);
+              }}
+            >
+              Rename
+            </button>
+          ) : null}
           <button
             type="button"
             role="menuitem"
@@ -62,7 +66,7 @@ export function FolderRowMenu({
               setOpen(false);
             }}
           >
-            Delete
+            {deleteLabel}
           </button>
         </div>
       ) : null}

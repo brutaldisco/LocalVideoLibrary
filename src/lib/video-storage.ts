@@ -14,6 +14,7 @@ import {
   thumbSidecarName,
 } from "./video-thumb-sidecar";
 import { idbGet, idbSet, ROOT_HANDLE_KEY } from "./idb";
+import { loadActiveLibrary, rememberLibrary } from "./library-roots";
 import type {
   ScanProgress,
   ScanResult,
@@ -132,7 +133,7 @@ export async function pickDirectoryRoot(): Promise<FileSystemDirectoryHandle> {
       startIn: "videos",
     });
     memoryRoot = handle;
-    await persistRootHandle(handle);
+    await rememberLibrary(handle);
     return handle;
   } catch (error) {
     if ((error as { name?: string }).name === "AbortError") {
@@ -140,7 +141,7 @@ export async function pickDirectoryRoot(): Promise<FileSystemDirectoryHandle> {
     }
     const handle = await window.showDirectoryPicker({ mode: "readwrite" });
     memoryRoot = handle;
-    await persistRootHandle(handle);
+    await rememberLibrary(handle);
     return handle;
   }
 }
@@ -708,9 +709,9 @@ export function createFolderInputAdapter(files: File[]): VideoStorageAdapter {
 }
 
 export async function restoreDirectoryAdapter(): Promise<VideoStorageAdapter | null> {
-  const handle = await loadSavedRootHandle();
-  if (!handle) {
+  const active = await loadActiveLibrary();
+  if (!active) {
     return null;
   }
-  return createDirectoryAdapter(handle);
+  return createDirectoryAdapter(active.handle);
 }
