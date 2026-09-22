@@ -1156,9 +1156,6 @@ export default function App() {
                             ? folderNameFromPath(entry.folderPath)
                             : "(root)"}
                         </span>
-                        <span className="video-meta-sep" aria-hidden="true">
-                          ·
-                        </span>
                         <span className="video-meta-size">
                           {formatBytes(entry.size)}
                         </span>
