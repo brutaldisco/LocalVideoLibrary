@@ -1,3 +1,4 @@
+import { browserEntryHint, browserPathHint } from "./browser-file-name";
 import {
   isVideoFileName,
   joinFolderPath,
@@ -8,6 +9,10 @@ import {
   validateFolderPath,
   validateVideoFileName,
 } from "./file-helpers";
+import {
+  relativePathFromFolderInput,
+  supplementDirectoryListing,
+} from "./scan-folder-files";
 import {
   embedThumbSeek,
   readThumbSeekFromBlob,
@@ -476,7 +481,10 @@ class DirectoryVideoAdapter implements VideoStorageAdapter {
   readonly mode: SourceMode = "directory";
   readonly writable = true;
 
-  constructor(private readonly root: FileSystemDirectoryHandle) {}
+  constructor(
+    private readonly root: FileSystemDirectoryHandle,
+    readonly supplementalFiles: readonly File[] = [],
+  ) {}
 
   get rootName(): string {
     return this.root.name;
@@ -492,12 +500,68 @@ class DirectoryVideoAdapter implements VideoStorageAdapter {
       this.mode,
       onProgress,
     );
+    const merged = supplementDirectoryListing(
+      {
+        videos: result.videos,
+        folders: [...result.folders],
+        skipped: result.skipped,
+        errors: result.errors,
+      },
+      this.supplementalFiles,
+      this.root.name,
+    );
     return {
-      videos: result.videos,
-      folders: [...result.folders].sort(),
-      skipped: result.skipped,
-      errors: result.errors,
+      ...merged,
+      folders: [...merged.folders].sort(),
     };
+  }
+
+  private supplementalFile(relativePath: string): File | undefined {
+    const target = normalizeFolderPath(relativePath);
+    for (const file of this.supplementalFiles) {
+      const relative = relativePathFromFolderInput(file, this.root.name);
+      if (relative && normalizeFolderPath(relative) === target) {
+        return file;
+      }
+    }
+    return undefined;
+  }
+
+  private assertMutableEntry(entry: VideoFileEntry): void {
+    const hint = browserEntryHint(entry);
+    if (hint) {
+      throw new Error(hint);
+    }
+  }
+
+  private assertMutablePath(relativePath: string): void {
+    const hint = browserPathHint(relativePath);
+    if (hint) {
+      throw new Error(hint);
+    }
+  }
+
+  private async loadSupplementalThumb(
+    entry: VideoFileEntry,
+  ): Promise<number | undefined> {
+    try {
+      const videoFile = entry.file ?? this.supplementalFile(entry.path);
+      if (videoFile) {
+        const embedded = await readThumbSeekFromBlob(videoFile);
+        if (embedded != null) {
+          return embedded;
+        }
+      }
+      const sidecar = this.supplementalFile(
+        joinFolderPath(entry.folderPath, thumbSidecarName(entry.name)),
+      );
+      if (!sidecar) {
+        return undefined;
+      }
+      return parseThumbSidecar(await sidecar.text());
+    } catch {
+      return undefined;
+    }
   }
 
   async createObjectUrl(entry: VideoFileEntry): Promise<string> {
@@ -513,6 +577,9 @@ class DirectoryVideoAdapter implements VideoStorageAdapter {
   async loadThumbSeekSeconds(
     entry: VideoFileEntry,
   ): Promise<number | undefined> {
+    if (browserEntryHint(entry)) {
+      return this.loadSupplementalThumb(entry);
+    }
     const parent = await resolveDirectoryHandle(this.root, entry.folderPath);
     const handle = entry.handle ?? (await parent.getFileHandle(entry.name));
     const embedded = await readThumbSeekFromBlob(await handle.getFile());
@@ -540,6 +607,7 @@ class DirectoryVideoAdapter implements VideoStorageAdapter {
     if (!Number.isFinite(seconds) || seconds < 0) {
       throw new Error("Invalid thumbnail seek position");
     }
+    this.assertMutableEntry(entry);
     await this.requireWrite();
     const parent = await resolveDirectoryHandle(this.root, entry.folderPath);
     const handle = entry.handle ?? (await parent.getFileHandle(entry.name));
@@ -565,6 +633,9 @@ class DirectoryVideoAdapter implements VideoStorageAdapter {
   }
 
   async deleteVideos(entries: VideoFileEntry[]): Promise<void> {
+    for (const entry of entries) {
+      this.assertMutableEntry(entry);
+    }
     await this.requireWrite();
     for (const entry of entries) {
       const parent = await resolveDirectoryHandle(this.root, entry.folderPath);
@@ -578,6 +649,7 @@ class DirectoryVideoAdapter implements VideoStorageAdapter {
     if (err) {
       throw new Error(err);
     }
+    this.assertMutableEntry(entry);
     await this.requireWrite();
     const parent = await resolveDirectoryHandle(this.root, entry.folderPath);
     if (await fileExists(parent, nextName)) {
@@ -608,6 +680,9 @@ class DirectoryVideoAdapter implements VideoStorageAdapter {
     const pathErr = validateFolderPath(normalized);
     if (pathErr) {
       throw new Error(pathErr);
+    }
+    for (const entry of entries) {
+      this.assertMutableEntry(entry);
     }
     await this.requireWrite();
     const targetDir = await resolveDirectoryHandle(this.root, normalized, true);
@@ -641,6 +716,7 @@ class DirectoryVideoAdapter implements VideoStorageAdapter {
     if (nameErr) {
       throw new Error(nameErr);
     }
+    this.assertMutablePath(normalized);
     await this.requireWrite();
     const parentPath = parentFolderPath(normalized);
     const oldName = normalized.split("/").pop() ?? normalized;
@@ -664,6 +740,7 @@ class DirectoryVideoAdapter implements VideoStorageAdapter {
     if (!normalized) {
       throw new Error("Root folder cannot be deleted");
     }
+    this.assertMutablePath(normalized);
     await this.requireWrite();
     const parentPath = parentFolderPath(normalized);
     const name = normalized.split("/").pop() ?? normalized;
@@ -812,9 +889,16 @@ class FolderInputVideoAdapter implements VideoStorageAdapter {
 
 export function createDirectoryAdapter(
   handle: FileSystemDirectoryHandle,
+  supplementalFiles: readonly File[] = [],
 ): VideoStorageAdapter {
   memoryRoot = handle;
-  return new DirectoryVideoAdapter(handle);
+  return new DirectoryVideoAdapter(handle, supplementalFiles);
+}
+
+export function hasCompleteFolderListing(adapter: VideoStorageAdapter): boolean {
+  return (
+    adapter instanceof DirectoryVideoAdapter && adapter.supplementalFiles.length > 0
+  );
 }
 
 /** Re-resolve the saved library handle before scanning so directory listings stay in sync with disk. */
@@ -824,6 +908,8 @@ export async function refreshDirectoryAdapterForRescan(
   if (adapter.mode !== "directory") {
     return adapter;
   }
+  const supplementalFiles =
+    adapter instanceof DirectoryVideoAdapter ? adapter.supplementalFiles : [];
   const active = await loadActiveLibrary();
   if (!active) {
     return adapter;
@@ -831,7 +917,7 @@ export async function refreshDirectoryAdapterForRescan(
   if (!(await ensureReadPermission(active.handle))) {
     throw new Error("Read permission was not granted");
   }
-  return createDirectoryAdapter(active.handle);
+  return createDirectoryAdapter(active.handle, supplementalFiles);
 }
 
 export function createFolderInputAdapter(files: File[]): VideoStorageAdapter {

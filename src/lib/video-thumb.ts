@@ -58,6 +58,8 @@ async function loadVideoMetaFromUrl(
   seekSeconds?: number,
 ): Promise<{
   duration?: number;
+  videoWidth?: number;
+  videoHeight?: number;
   thumbUrl?: string;
   thumbSeekSeconds?: number;
 }> {
@@ -70,6 +72,8 @@ async function loadVideoMetaFromUrl(
   try {
     await waitForEvent(video, "loadedmetadata");
     const duration = Number.isFinite(video.duration) ? video.duration : undefined;
+    let videoWidth = video.videoWidth > 0 ? video.videoWidth : undefined;
+    let videoHeight = video.videoHeight > 0 ? video.videoHeight : undefined;
     const resolvedSeek = resolveThumbSeekSeconds(duration, seekSeconds);
 
     let thumbUrl: string | undefined;
@@ -89,12 +93,20 @@ async function loadVideoMetaFromUrl(
         ctx.drawImage(video, 0, 0, width, height);
         thumbUrl = canvas.toDataURL("image/jpeg", THUMB_JPEG_QUALITY);
       }
+      if (video.videoWidth > 0) {
+        videoWidth = video.videoWidth;
+      }
+      if (video.videoHeight > 0) {
+        videoHeight = video.videoHeight;
+      }
     } catch {
       // Preview failure should not drop the item from the list.
     }
 
     return {
       duration,
+      videoWidth,
+      videoHeight,
       thumbUrl,
       thumbSeekSeconds: resolvedSeek,
     };

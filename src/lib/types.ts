@@ -25,6 +25,8 @@ export interface FolderEntry {
 
 export interface VideoMeta {
   duration?: number;
+  videoWidth?: number;
+  videoHeight?: number;
   thumbUrl?: string;
   failed?: boolean;
   thumbSeekSeconds?: number;

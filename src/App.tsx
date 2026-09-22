@@ -24,11 +24,17 @@ import {
   VideoPlayer,
 } from "./components/VideoPlayer";
 import {
+  BROWSER_SKIPPED_NAME_CHARACTERS,
+  browserEntryHint,
+} from "./lib/browser-file-name";
+import {
   buildFolderEntries,
   filterVideos,
+  folderNameFromPath,
   formatBytes,
   formatDate,
   formatDuration,
+  formatVideoQuality,
   PAGE_SIZE,
   sortVideos,
 } from "./lib/file-helpers";
@@ -59,10 +65,12 @@ import {
   playlistIndex,
   stepPlaylist,
 } from "./lib/video-playlist";
+import { folderInputRootName } from "./lib/scan-folder-files";
 import {
   createDirectoryAdapter,
   createFolderInputAdapter,
   ensureReadPermission,
+  hasCompleteFolderListing,
   loadSavedRootHandle,
   pickDirectoryRoot,
   refreshDirectoryAdapterForRescan,
@@ -84,9 +92,12 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 const META_BATCH_SIZE = 80;
+type FolderPickIntent = "open-library" | "refresh-listing";
 
 export default function App() {
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const folderPickIntentRef = useRef<FolderPickIntent>("open-library");
+  const [listingComplete, setListingComplete] = useState(false);
   const [adapter, setAdapter] = useState<VideoStorageAdapter | null>(null);
   const [libraries, setLibraries] = useState<SavedLibrary[]>([]);
   const [activeLibraryId, setActiveLibraryId] = useState<string | null>(null);
@@ -169,11 +180,24 @@ export default function App() {
         const canWrite = await adapterToUse.canWrite();
         setWritable(canWrite);
         setNeedsPermission(false);
-        setStatusMessage(
+        const listingIsComplete = hasCompleteFolderListing(adapterToUse);
+        setListingComplete(listingIsComplete);
+        const blockedCount = result.videos.filter((entry) =>
+          browserEntryHint(entry),
+        ).length;
+        const summary =
           result.errors.length > 0
             ? `Scan finished with ${result.errors.length} read error(s).`
-            : `Found ${result.videos.length} video(s).`,
-        );
+            : `Found ${result.videos.length} video(s).`;
+        const incomplete =
+          !listingIsComplete && adapterToUse.mode === "directory"
+            ? " This count omits names Chrome hides. Refresh and choose the folder to include them."
+            : "";
+        const blocked =
+          blockedCount > 0
+            ? ` ${blockedCount} can play, but Chrome cannot save changes to those names.`
+            : "";
+        setStatusMessage(`${summary}${incomplete}${blocked}`);
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Scan failed";
@@ -192,13 +216,27 @@ export default function App() {
     if (!adapter || scanning) {
       return;
     }
-    if (adapter.mode === "folder-input") {
-      setStatusMessage("Select the folder again to load new files.");
-      folderInputRef.current?.click();
+    beginFolderPick(
+      adapter.mode === "directory" && supportsDirectoryPicker()
+        ? "refresh-listing"
+        : "open-library",
+    );
+  }, [adapter, scanning]);
+
+  function beginFolderPick(intent: FolderPickIntent) {
+    folderPickIntentRef.current = intent;
+    const input = folderInputRef.current;
+    if (!input) {
       return;
     }
-    void runScan(adapter, { resetListFilters: true });
-  }, [adapter, scanning, runScan]);
+    input.value = "";
+    input.click();
+  }
+
+  function handleOpenDirectory() {
+    setErrorMessage(null);
+    beginFolderPick("open-library");
+  }
 
   const attachAdapter = useCallback(
     async (nextAdapter: VideoStorageAdapter, rescan = true) => {
@@ -413,23 +451,6 @@ export default function App() {
     };
   }, [playing, adapter]);
 
-  async function handleOpenDirectory() {
-    setErrorMessage(null);
-    try {
-      const handle = await pickDirectoryRoot();
-      await refreshLibraries();
-      setPlaying(null);
-      await attachAdapter(createDirectoryAdapter(handle));
-    } catch (error) {
-      if ((error as { name?: string }).name === "AbortError") {
-        return;
-      }
-      setErrorMessage(
-        error instanceof Error ? error.message : "Could not open folder",
-      );
-    }
-  }
-
   async function handleSelectLibrary(library: SavedLibrary) {
     if (library.id === activeLibraryId && adapter) {
       return;
@@ -497,13 +518,68 @@ export default function App() {
     }
   }
 
-  function handleFolderInputChange(event: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFolderInputChange(event: React.ChangeEvent<HTMLInputElement>) {
     const files = [...(event.target.files ?? [])];
     event.target.value = "";
     if (files.length === 0) {
       return;
     }
-    void attachAdapter(createFolderInputAdapter(files));
+    const intent = folderPickIntentRef.current;
+    setErrorMessage(null);
+
+    if (!supportsDirectoryPicker()) {
+      setPlaying(null);
+      await attachAdapter(createFolderInputAdapter(files));
+      return;
+    }
+
+    const pickedRoot = folderInputRootName(files);
+    if (intent === "refresh-listing" && adapter?.mode === "directory") {
+      if (pickedRoot !== adapter.rootName) {
+        setErrorMessage(
+          `Choose "${adapter.rootName}". The selected folder was "${pickedRoot}".`,
+        );
+        return;
+      }
+      try {
+        const active = await loadActiveLibrary();
+        if (!active || active.handle.name !== pickedRoot) {
+          setErrorMessage("Folder access is not saved. Open the folder again.");
+          return;
+        }
+        setSearchQuery("");
+        setPlaying(null);
+        await attachAdapter(createDirectoryAdapter(active.handle, files));
+      } catch (error) {
+        setErrorMessage(
+          error instanceof Error ? error.message : "Could not refresh folder",
+        );
+      }
+      return;
+    }
+
+    try {
+      const handle = await pickDirectoryRoot();
+      await refreshLibraries();
+      setPlaying(null);
+      if (handle.name !== pickedRoot) {
+        setErrorMessage(
+          `Choose the same folder in both dialogs so names Chrome hides are included. The file list was "${pickedRoot}" and write access was "${handle.name}".`,
+        );
+        await attachAdapter(createDirectoryAdapter(handle));
+        return;
+      }
+      await attachAdapter(createDirectoryAdapter(handle, files));
+    } catch (error) {
+      if ((error as { name?: string }).name === "AbortError") {
+        setPlaying(null);
+        await attachAdapter(createFolderInputAdapter(files));
+        return;
+      }
+      setErrorMessage(
+        error instanceof Error ? error.message : "Could not open folder",
+      );
+    }
   }
 
   function toggleSelection(id: string) {
@@ -695,6 +771,8 @@ export default function App() {
 
   const hasMore = visibleCount < filteredVideos.length;
   const readOnly = adapter != null && !writable;
+  const directoryListingIncomplete =
+    supportsDirectoryPicker() && adapter?.mode === "directory" && !listingComplete;
   const activeLibrary =
     libraries.find((library) => library.id === activeLibraryId) ?? null;
   const otherLibraries = libraries.filter(
@@ -703,6 +781,14 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      <input
+        ref={folderInputRef}
+        type="file"
+        multiple
+        hidden
+        {...{ webkitdirectory: "", directory: "" }}
+        onChange={(event) => void handleFolderInputChange(event)}
+      />
       <aside className="sidebar">
         <div className="sidebar-header">
           <h1>Local Video Library</h1>
@@ -728,25 +814,18 @@ export default function App() {
                 <button
                   type="button"
                   className="btn outline"
-                  onClick={() => folderInputRef.current?.click()}
+                  onClick={() => beginFolderPick("open-library")}
                 >
                   <FolderInput size={16} />
                   Choose folder
                 </button>
-                <input
-                  ref={folderInputRef}
-                  type="file"
-                  multiple
-                  hidden
-                  {...{ webkitdirectory: "", directory: "" }}
-                  onChange={handleFolderInputChange}
-                />
               </>
             )}
             <button
               type="button"
               className="btn icon"
               aria-label="Refresh"
+              title="Choose this folder again so names Chrome hides are included"
               disabled={!adapter || scanning}
               onClick={handleRescan}
             >
@@ -758,6 +837,13 @@ export default function App() {
         {readOnly ? (
           <p className="notice">
             Read-only mode. Rename, move, and delete are disabled.
+          </p>
+        ) : null}
+
+        {directoryListingIncomplete ? (
+          <p className="notice">
+            Saved folder access skips filenames containing {BROWSER_SKIPPED_NAME_CHARACTERS}, or
+            names that end with a space. Refresh and choose this folder to list those videos.
           </p>
         ) : null}
 
@@ -982,7 +1068,7 @@ export default function App() {
               <button
                 type="button"
                 className="btn primary"
-                onClick={() => folderInputRef.current?.click()}
+                onClick={() => beginFolderPick("open-library")}
               >
                 <FolderInput size={16} />
                 Choose folder
@@ -1012,6 +1098,8 @@ export default function App() {
               {visibleVideos.map((entry) => {
                 const meta = metaMap.get(entry.id);
                 const selected = selectedIds.has(entry.id);
+                const nameHint = browserEntryHint(entry);
+                const quality = formatVideoQuality(meta?.videoWidth, meta?.videoHeight);
                 return (
                   <article
                     key={entry.id}
@@ -1043,13 +1131,55 @@ export default function App() {
                       </div>
                       <div className="video-meta">
                         <strong>{entry.name}</strong>
-                        <span>{entry.folderPath || "(root)"}</span>
-                        <span>
-                          {formatBytes(entry.size)} · {formatDate(entry.lastModified)}
-                        </span>
+                        {nameHint ? (
+                          <span className="name-warning" title={nameHint}>
+                            {nameHint}
+                          </span>
+                        ) : null}
+                        {viewMode === "list" ? (
+                          <>
+                            <span>{entry.folderPath || "(root)"}</span>
+                            <span>
+                              {`${formatBytes(entry.size)} · ${formatDate(entry.lastModified)}`}
+                            </span>
+                          </>
+                        ) : null}
                       </div>
                     </button>
-                    {writable ? (
+                    {viewMode === "grid" ? (
+                      <div className="video-meta-foot">
+                        <span
+                          className="video-meta-folder"
+                          title={entry.folderPath || "(root)"}
+                        >
+                          {entry.folderPath
+                            ? folderNameFromPath(entry.folderPath)
+                            : "(root)"}
+                        </span>
+                        <span className="video-meta-sep" aria-hidden="true">
+                          ·
+                        </span>
+                        <span className="video-meta-size">
+                          {formatBytes(entry.size)}
+                        </span>
+                        {quality ? (
+                          <>
+                            <span className="video-meta-sep" aria-hidden="true">
+                              ·
+                            </span>
+                            <span className="video-meta-quality">{quality}</span>
+                          </>
+                        ) : null}
+                        {writable ? (
+                          <VideoCardMenu
+                            entry={entry}
+                            onRename={openRenameVideo}
+                            onMove={(item) => openMoveVideos([item])}
+                            onDelete={(item) => openDeleteVideos([item])}
+                          />
+                        ) : null}
+                      </div>
+                    ) : writable ? (
                       <VideoCardMenu
                         entry={entry}
                         onRename={openRenameVideo}

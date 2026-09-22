@@ -1,3 +1,7 @@
+import {
+  browserFileNameBlockReason,
+  toBrowserSafeFileName,
+} from "./browser-file-name";
 import type { SortDirection, SortKey, VideoFileEntry } from "./types";
 
 export const VIDEO_EXTENSIONS = new Set([
@@ -64,6 +68,10 @@ export function validateEntryName(name: string): string | null {
   if (trimmed === "." || trimmed === "..") {
     return "Invalid name";
   }
+  const blocked = browserFileNameBlockReason(trimmed);
+  if (blocked) {
+    return `Chrome cannot modify "${trimmed}" because it ${blocked}. Rename it to "${toBrowserSafeFileName(trimmed)}".`;
+  }
   return null;
 }
 
@@ -110,6 +118,37 @@ export function formatBytes(bytes: number): string {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+const VIDEO_QUALITY_LEVELS = [
+  { shortSide: 4320, longSide: 7680, label: "8K" },
+  { shortSide: 2160, longSide: 3840, label: "4K" },
+  { shortSide: 1440, longSide: 2560, label: "1440p" },
+  { shortSide: 1080, longSide: 1920, label: "1080p" },
+  { shortSide: 720, longSide: 1280, label: "720p" },
+  { shortSide: 480, longSide: 854, label: "480p" },
+  { shortSide: 360, longSide: 640, label: "360p" },
+] as const;
+
+export function formatVideoQuality(width?: number, height?: number): string | undefined {
+  if (
+    width == null ||
+    height == null ||
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0
+  ) {
+    return undefined;
+  }
+  const longSide = Math.max(width, height);
+  const shortSide = Math.min(width, height);
+  for (const level of VIDEO_QUALITY_LEVELS) {
+    if (shortSide >= level.shortSide * 0.94 || longSide >= level.longSide * 0.94) {
+      return level.label;
+    }
+  }
+  return `${Math.round(shortSide)}p`;
 }
 
 export function formatDate(ms?: number): string {

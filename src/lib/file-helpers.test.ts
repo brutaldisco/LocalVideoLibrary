@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   filterVideos,
   formatBytes,
+  formatVideoQuality,
   isVideoFileName,
   naturalCompare,
   sortVideos,
@@ -51,6 +52,13 @@ describe("validateEntryName", () => {
     expect(validateEntryName("")).toMatch(/empty/i);
     expect(validateEntryName("a/b.mp4")).toMatch(/separator/i);
     expect(validateEntryName("..")).toMatch(/invalid/i);
+  });
+
+  it("rejects names Chrome's folder listing would hide", () => {
+    expect(validateEntryName("live:set")).toMatch(/Chrome cannot modify/);
+    expect(validateEntryName("set|live")).toMatch(/Chrome cannot modify/);
+    expect(validateFolderPath("music/live:set")).toMatch(/Chrome cannot modify/);
+    expect(validateVideoFileName("Techno：Psytrance.mp4")).toBeNull();
   });
 });
 
@@ -106,6 +114,27 @@ describe("sortVideos", () => {
       "a/2-b.mp4",
       "b/live.webm",
     ]);
+  });
+});
+
+describe("formatVideoQuality", () => {
+  it("labels standard frame sizes", () => {
+    expect(formatVideoQuality(1920, 1080)).toBe("1080p");
+    expect(formatVideoQuality(1280, 720)).toBe("720p");
+    expect(formatVideoQuality(3840, 2160)).toBe("4K");
+    expect(formatVideoQuality(2560, 1440)).toBe("1440p");
+    expect(formatVideoQuality(7680, 4320)).toBe("8K");
+  });
+
+  it("uses the long side for widescreen and portrait frames", () => {
+    expect(formatVideoQuality(1920, 800)).toBe("1080p");
+    expect(formatVideoQuality(1080, 1920)).toBe("1080p");
+    expect(formatVideoQuality(720, 1280)).toBe("720p");
+  });
+
+  it("returns nothing until both dimensions are known", () => {
+    expect(formatVideoQuality(undefined, 1080)).toBeUndefined();
+    expect(formatVideoQuality(0, 1080)).toBeUndefined();
   });
 });
 
