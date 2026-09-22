@@ -23,10 +23,7 @@ import {
   saveRepeatMode,
   VideoPlayer,
 } from "./components/VideoPlayer";
-import {
-  BROWSER_SKIPPED_NAME_CHARACTERS,
-  browserEntryHint,
-} from "./lib/browser-file-name";
+import { browserEntryHint } from "./lib/browser-file-name";
 import {
   buildFolderEntries,
   filterVideos,
@@ -70,7 +67,6 @@ import {
   createDirectoryAdapter,
   createFolderInputAdapter,
   ensureReadPermission,
-  hasCompleteFolderListing,
   loadSavedRootHandle,
   pickDirectoryRoot,
   refreshDirectoryAdapterForRescan,
@@ -97,7 +93,6 @@ type FolderPickIntent = "open-library" | "refresh-listing";
 export default function App() {
   const folderInputRef = useRef<HTMLInputElement>(null);
   const folderPickIntentRef = useRef<FolderPickIntent>("open-library");
-  const [listingComplete, setListingComplete] = useState(false);
   const [adapter, setAdapter] = useState<VideoStorageAdapter | null>(null);
   const [libraries, setLibraries] = useState<SavedLibrary[]>([]);
   const [activeLibraryId, setActiveLibraryId] = useState<string | null>(null);
@@ -180,8 +175,6 @@ export default function App() {
         const canWrite = await adapterToUse.canWrite();
         setWritable(canWrite);
         setNeedsPermission(false);
-        const listingIsComplete = hasCompleteFolderListing(adapterToUse);
-        setListingComplete(listingIsComplete);
         const blockedCount = result.videos.filter((entry) =>
           browserEntryHint(entry),
         ).length;
@@ -189,15 +182,11 @@ export default function App() {
           result.errors.length > 0
             ? `Scan finished with ${result.errors.length} read error(s).`
             : `Found ${result.videos.length} video(s).`;
-        const incomplete =
-          !listingIsComplete && adapterToUse.mode === "directory"
-            ? " This count omits names Chrome hides. Refresh and choose the folder to include them."
-            : "";
         const blocked =
           blockedCount > 0
             ? ` ${blockedCount} can play, but Chrome cannot save changes to those names.`
             : "";
-        setStatusMessage(`${summary}${incomplete}${blocked}`);
+        setStatusMessage(`${summary}${blocked}`);
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Scan failed";
@@ -771,8 +760,6 @@ export default function App() {
 
   const hasMore = visibleCount < filteredVideos.length;
   const readOnly = adapter != null && !writable;
-  const directoryListingIncomplete =
-    supportsDirectoryPicker() && adapter?.mode === "directory" && !listingComplete;
   const activeLibrary =
     libraries.find((library) => library.id === activeLibraryId) ?? null;
   const otherLibraries = libraries.filter(
@@ -837,13 +824,6 @@ export default function App() {
         {readOnly ? (
           <p className="notice">
             Read-only mode. Rename, move, and delete are disabled.
-          </p>
-        ) : null}
-
-        {directoryListingIncomplete ? (
-          <p className="notice">
-            Saved folder access skips filenames containing {BROWSER_SKIPPED_NAME_CHARACTERS}, or
-            names that end with a space. Refresh and choose this folder to list those videos.
           </p>
         ) : null}
 
@@ -1138,7 +1118,9 @@ export default function App() {
                         ) : null}
                         {viewMode === "list" ? (
                           <>
-                            <span>{entry.folderPath || "(root)"}</span>
+                            {entry.folderPath ? (
+                              <span>{entry.folderPath}</span>
+                            ) : null}
                             <span>
                               {`${formatBytes(entry.size)} · ${formatDate(entry.lastModified)}`}
                             </span>
@@ -1148,14 +1130,14 @@ export default function App() {
                     </button>
                     {viewMode === "grid" ? (
                       <div className="video-meta-foot">
-                        <span
-                          className="video-meta-folder"
-                          title={entry.folderPath || "(root)"}
-                        >
-                          {entry.folderPath
-                            ? folderNameFromPath(entry.folderPath)
-                            : "(root)"}
-                        </span>
+                        {entry.folderPath ? (
+                          <span
+                            className="video-meta-folder"
+                            title={entry.folderPath}
+                          >
+                            {folderNameFromPath(entry.folderPath)}
+                          </span>
+                        ) : null}
                         <span className="video-meta-size">
                           {formatBytes(entry.size)}
                         </span>
