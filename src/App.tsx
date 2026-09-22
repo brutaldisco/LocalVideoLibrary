@@ -1129,7 +1129,9 @@ export default function App() {
                       </div>
                     </button>
                     {viewMode === "grid" ? (
-                      <div className="video-meta-foot">
+                      <div
+                        className={`video-meta-foot${entry.folderPath ? "" : " align-end"}`}
+                      >
                         {entry.folderPath ? (
                           <span
                             className="video-meta-folder"
