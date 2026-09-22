@@ -9,6 +9,11 @@ import {
   validateVideoFileName,
 } from "./file-helpers";
 import {
+  embedThumbSeek,
+  readThumbSeekFromBlob,
+  UnsupportedMediaContainerError,
+} from "./video-thumb-box";
+import {
   parseThumbSidecar,
   serializeThumbSidecar,
   thumbSidecarName,
@@ -255,6 +260,78 @@ async function deleteSidecarIfExists(
   }
 }
 
+async function withWritable(
+  handle: FileSystemFileHandle,
+  action: (writable: FileSystemWritableFileStream) => Promise<void>,
+): Promise<void> {
+  const writable = await handle.createWritable({ keepExistingData: true });
+  try {
+    await action(writable);
+    await writable.close();
+  } catch (error) {
+    await writable.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+async function writeEmbeddedThumbSeek(
+  handle: FileSystemFileHandle,
+  seconds: number,
+): Promise<void> {
+  const file = await handle.getFile();
+  await embedThumbSeek(
+    file.size,
+    async (offset, length) =>
+      new Uint8Array(
+        await (await handle.getFile()).slice(offset, offset + length).arrayBuffer(),
+      ),
+    async (offset, data) => {
+      await withWritable(handle, async (writable) => {
+        await writable.seek(offset);
+        const copy = new ArrayBuffer(data.byteLength);
+        new Uint8Array(copy).set(data);
+        await writable.write(copy);
+      });
+    },
+    seconds,
+    {
+      truncate: async (size) => {
+        await withWritable(handle, async (writable) => {
+          await writable.truncate(size);
+        });
+      },
+    },
+  );
+}
+
+async function absorbSidecar(
+  parent: FileSystemDirectoryHandle,
+  handle: FileSystemFileHandle,
+  videoName: string,
+): Promise<"embedded" | "sidecar"> {
+  const embedded = await readThumbSeekFromBlob(await handle.getFile());
+  const sidecar = await readSidecarSeekSeconds(parent, videoName);
+  if (embedded != null) {
+    if (sidecar != null) {
+      await deleteSidecarIfExists(parent, videoName);
+    }
+    return "embedded";
+  }
+  if (sidecar == null) {
+    return "embedded";
+  }
+  try {
+    await writeEmbeddedThumbSeek(handle, sidecar);
+    await deleteSidecarIfExists(parent, videoName);
+    return "embedded";
+  } catch (error) {
+    if (error instanceof UnsupportedMediaContainerError) {
+      return "sidecar";
+    }
+    throw error;
+  }
+}
+
 async function renameSidecarIfExists(
   parent: FileSystemDirectoryHandle,
   oldVideoName: string,
@@ -437,7 +514,23 @@ class DirectoryVideoAdapter implements VideoStorageAdapter {
     entry: VideoFileEntry,
   ): Promise<number | undefined> {
     const parent = await resolveDirectoryHandle(this.root, entry.folderPath);
-    return readSidecarSeekSeconds(parent, entry.name);
+    const handle = entry.handle ?? (await parent.getFileHandle(entry.name));
+    const embedded = await readThumbSeekFromBlob(await handle.getFile());
+    if (embedded != null) {
+      await deleteSidecarIfExists(parent, entry.name);
+      return embedded;
+    }
+    const sidecar = await readSidecarSeekSeconds(parent, entry.name);
+    if (sidecar == null) {
+      return undefined;
+    }
+    try {
+      await writeEmbeddedThumbSeek(handle, sidecar);
+      await deleteSidecarIfExists(parent, entry.name);
+    } catch {
+      // Keep the sidecar until a later writable scan can embed it.
+    }
+    return sidecar;
   }
 
   async saveThumbSeekSeconds(
@@ -449,7 +542,16 @@ class DirectoryVideoAdapter implements VideoStorageAdapter {
     }
     await this.requireWrite();
     const parent = await resolveDirectoryHandle(this.root, entry.folderPath);
-    await writeSidecarSeekSeconds(parent, entry.name, seconds);
+    const handle = entry.handle ?? (await parent.getFileHandle(entry.name));
+    try {
+      await writeEmbeddedThumbSeek(handle, seconds);
+      await deleteSidecarIfExists(parent, entry.name);
+    } catch (error) {
+      if (!(error instanceof UnsupportedMediaContainerError)) {
+        throw error;
+      }
+      await writeSidecarSeekSeconds(parent, entry.name, seconds);
+    }
   }
 
   async canWrite(): Promise<boolean> {
@@ -482,9 +584,12 @@ class DirectoryVideoAdapter implements VideoStorageAdapter {
       throw new Error(`A file named "${nextName}" already exists`);
     }
     const sourceHandle = await parent.getFileHandle(entry.name);
+    const thumb = await absorbSidecar(parent, sourceHandle, entry.name);
     await copyFileHandle(sourceHandle, parent, nextName);
     try {
-      await renameSidecarIfExists(parent, entry.name, nextName);
+      if (thumb === "sidecar") {
+        await renameSidecarIfExists(parent, entry.name, nextName);
+      }
       await parent.removeEntry(entry.name);
     } catch (error) {
       throw new Error(
@@ -508,8 +613,12 @@ class DirectoryVideoAdapter implements VideoStorageAdapter {
     const targetDir = await resolveDirectoryHandle(this.root, normalized, true);
     for (const entry of entries) {
       const sourceDir = await resolveDirectoryHandle(this.root, entry.folderPath);
+      const sourceHandle = await sourceDir.getFileHandle(entry.name);
+      const thumb = await absorbSidecar(sourceDir, sourceHandle, entry.name);
       await moveFileBetweenDirs(sourceDir, entry.name, targetDir, entry.name);
-      await moveSidecarIfExists(sourceDir, entry.name, targetDir);
+      if (thumb === "sidecar") {
+        await moveSidecarIfExists(sourceDir, entry.name, targetDir);
+      }
     }
   }
 
@@ -633,6 +742,12 @@ class FolderInputVideoAdapter implements VideoStorageAdapter {
   async loadThumbSeekSeconds(
     entry: VideoFileEntry,
   ): Promise<number | undefined> {
+    if (entry.file) {
+      const embedded = await readThumbSeekFromBlob(entry.file);
+      if (embedded != null) {
+        return embedded;
+      }
+    }
     const sidecarPath = joinFolderPath(
       entry.folderPath,
       thumbSidecarName(entry.name),
@@ -700,6 +815,23 @@ export function createDirectoryAdapter(
 ): VideoStorageAdapter {
   memoryRoot = handle;
   return new DirectoryVideoAdapter(handle);
+}
+
+/** Re-resolve the saved library handle before scanning so directory listings stay in sync with disk. */
+export async function refreshDirectoryAdapterForRescan(
+  adapter: VideoStorageAdapter,
+): Promise<VideoStorageAdapter> {
+  if (adapter.mode !== "directory") {
+    return adapter;
+  }
+  const active = await loadActiveLibrary();
+  if (!active) {
+    return adapter;
+  }
+  if (!(await ensureReadPermission(active.handle))) {
+    throw new Error("Read permission was not granted");
+  }
+  return createDirectoryAdapter(active.handle);
 }
 
 export function createFolderInputAdapter(files: File[]): VideoStorageAdapter {

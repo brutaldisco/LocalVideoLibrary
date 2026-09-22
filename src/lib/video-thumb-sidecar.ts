@@ -81,6 +81,7 @@ async function clearLegacyThumbMap(): Promise<void> {
   await idbDel(LEGACY_THUMB_POSITIONS_KEY);
 }
 
+/** Copies thumbnail positions saved in IndexedDB into the video files. */
 export async function migrateLegacyThumbPositionsToSidecars(
   adapter: VideoStorageAdapter,
   videos: VideoFileEntry[],

@@ -65,6 +65,7 @@ import {
   ensureReadPermission,
   loadSavedRootHandle,
   pickDirectoryRoot,
+  refreshDirectoryAdapterForRescan,
   supportsDirectoryPicker,
 } from "./lib/video-storage";
 
@@ -130,49 +131,74 @@ export default function App() {
   const [installPrompt, setInstallPrompt] =
     useState<BeforeInstallPromptEvent | null>(null);
 
-  const runScan = useCallback(async (nextAdapter: VideoStorageAdapter) => {
-    setScanning(true);
-    setErrorMessage(null);
-    setStatusMessage("Scanning folder…");
-    setScanProgress({ videos: 0, folders: 0, skipped: 0 });
-    try {
-      const result = await nextAdapter.scan((progress) => {
-        setScanProgress(progress);
-      });
-      setScanResult(result);
-      setSelectedIds(new Set());
-      setVisibleCount(PAGE_SIZE);
-      setMetaMap(new Map());
-      setSelectedFolder(undefined);
-      const loadedPositions = await loadThumbPositionsFromVideos(
-        nextAdapter,
-        result.videos,
-      );
-      const thumbPositions = await migrateLegacyThumbPositionsToSidecars(
-        nextAdapter,
-        result.videos,
-        loadedPositions,
-      );
-      setThumbPositions(thumbPositions);
-      const canWrite = await nextAdapter.canWrite();
-      setWritable(canWrite);
-      setNeedsPermission(false);
-      setStatusMessage(
-        result.errors.length > 0
-          ? `Scan finished with ${result.errors.length} read error(s).`
-          : `Found ${result.videos.length} video(s).`,
-      );
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Scan failed";
-      if (/permission/i.test(message)) {
-        setNeedsPermission(true);
+  const runScan = useCallback(
+    async (
+      nextAdapter: VideoStorageAdapter,
+      options?: { resetListFilters?: boolean },
+    ) => {
+      setScanning(true);
+      setErrorMessage(null);
+      setStatusMessage("Scanning folder…");
+      setScanProgress({ videos: 0, folders: 0, skipped: 0 });
+      try {
+        const adapterToUse = await refreshDirectoryAdapterForRescan(nextAdapter);
+        if (adapterToUse !== nextAdapter) {
+          setAdapter(adapterToUse);
+        }
+        if (options?.resetListFilters) {
+          setSearchQuery("");
+        }
+        const result = await adapterToUse.scan((progress) => {
+          setScanProgress(progress);
+        });
+        setScanResult(result);
+        setSelectedIds(new Set());
+        setVisibleCount(PAGE_SIZE);
+        setMetaMap(new Map());
+        setSelectedFolder(null);
+        const loadedPositions = await loadThumbPositionsFromVideos(
+          adapterToUse,
+          result.videos,
+        );
+        const thumbPositions = await migrateLegacyThumbPositionsToSidecars(
+          adapterToUse,
+          result.videos,
+          loadedPositions,
+        );
+        setThumbPositions(thumbPositions);
+        const canWrite = await adapterToUse.canWrite();
+        setWritable(canWrite);
+        setNeedsPermission(false);
+        setStatusMessage(
+          result.errors.length > 0
+            ? `Scan finished with ${result.errors.length} read error(s).`
+            : `Found ${result.videos.length} video(s).`,
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Scan failed";
+        if (/permission/i.test(message)) {
+          setNeedsPermission(true);
+        }
+        setErrorMessage(message);
+      } finally {
+        setScanning(false);
       }
-      setErrorMessage(message);
-    } finally {
-      setScanning(false);
+    },
+    [],
+  );
+
+  const handleRescan = useCallback(() => {
+    if (!adapter || scanning) {
+      return;
     }
-  }, []);
+    if (adapter.mode === "folder-input") {
+      setStatusMessage("Select the folder again to load new files.");
+      folderInputRef.current?.click();
+      return;
+    }
+    void runScan(adapter, { resetListFilters: true });
+  }, [adapter, scanning, runScan]);
 
   const attachAdapter = useCallback(
     async (nextAdapter: VideoStorageAdapter, rescan = true) => {
@@ -722,7 +748,7 @@ export default function App() {
               className="btn icon"
               aria-label="Refresh"
               disabled={!adapter || scanning}
-              onClick={() => adapter && void runScan(adapter)}
+              onClick={handleRescan}
             >
               <RefreshCw size={16} />
             </button>
@@ -975,7 +1001,7 @@ export default function App() {
               type="button"
               className="btn icon"
               aria-label="Rescan"
-              onClick={() => adapter && void runScan(adapter)}
+              onClick={handleRescan}
             >
               <RefreshCw size={16} />
             </button>
