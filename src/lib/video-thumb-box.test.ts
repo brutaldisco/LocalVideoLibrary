@@ -4,6 +4,7 @@ import {
   createThumbBox,
   embedThumbSeek,
   parseThumbBox,
+  playbackEndOffset,
   readThumbSeek,
   THUMB_BOX_SIZE,
   UnsupportedMediaContainerError,
@@ -64,9 +65,31 @@ function renameFolder(
   return next;
 }
 
+function ascii(value: string): Uint8Array {
+  return Uint8Array.from(value, (char) => char.charCodeAt(0));
+}
+
+function encodeFreeBox(): Uint8Array {
+  const payload = new Uint8Array(8);
+  const out = new Uint8Array(16);
+  new DataView(out.buffer).setUint32(0, 16, false);
+  out.set(ascii("free"), 4);
+  out.set(payload, 8);
+  return out;
+}
+
+function bmffWithTrailingFree(): Uint8Array {
+  const base = createMinimalBmff();
+  const free = encodeFreeBox();
+  const out = new Uint8Array(base.length + free.length);
+  out.set(base, 0);
+  out.set(free, base.length);
+  return out;
+}
+
 describe("thumb box", () => {
   it("appends a seek position without changing the media bytes", async () => {
-    const original = createMinimalBmff();
+    const original = bmffWithTrailingFree();
     const file = new MemoryFile(original);
     await file.embed(304.989895);
     expect(file.bytes.length).toBe(original.length + THUMB_BOX_SIZE);
@@ -74,8 +97,25 @@ describe("thumb box", () => {
     expect(await file.seek()).toBe(304.989895);
   });
 
-  it("overwrites an existing box in place", async () => {
+  it("rejects append after mdat so browsers can keep playing the file", async () => {
     const file = new MemoryFile(createMinimalBmff());
+    await expect(file.embed(12)).rejects.toBeInstanceOf(
+      UnsupportedMediaContainerError,
+    );
+    expect(file.bytes.length).toBe(createMinimalBmff().length);
+  });
+
+  it("strips a trailing thumb box for playback", async () => {
+    const original = bmffWithTrailingFree();
+    const file = new MemoryFile(original);
+    await file.embed(42);
+    const end = await playbackEndOffset(file.bytes.length, file.read);
+    expect(end).toBe(original.length);
+    expect(file.bytes.slice(0, end)).toEqual(original);
+  });
+
+  it("overwrites an existing box in place", async () => {
+    const file = new MemoryFile(bmffWithTrailingFree());
     await file.embed(1.5);
     const length = file.bytes.length;
     await file.embed(0);
@@ -89,7 +129,7 @@ describe("thumb box", () => {
     expect(file.bytes.length).toBe("not-a-video-file!!".length);
   });
 
-  it("rejects an open-ended box instead of appending", async () => {
+  it("rejects an open-ended box instead of appending metadata", async () => {
     const open = new Uint8Array(16);
     new DataView(open.buffer).setUint32(0, 0, false);
     open.set(ascii("mdat"), 4);
@@ -107,7 +147,7 @@ describe("thumb box", () => {
 
 describe("renames", () => {
   it("keeps the seek position when the pikpak folder is renamed", async () => {
-    const clip = new MemoryFile(createMinimalBmff());
+    const clip = new MemoryFile(bmffWithTrailingFree());
     await clip.embed(18.5);
     const library = renameFolder(
       new Map([["Movies/pikpak/clip.mp4", clip]]),
@@ -121,7 +161,7 @@ describe("renames", () => {
   });
 
   it("keeps the seek position when a folder inside Music is renamed", async () => {
-    const clip = new MemoryFile(createMinimalBmff());
+    const clip = new MemoryFile(bmffWithTrailingFree());
     await clip.embed(7.25);
     const library = renameFolder(
       new Map([["Movies/Music/live/show.mp4", clip]]),
@@ -134,7 +174,7 @@ describe("renames", () => {
   });
 
   it("keeps the seek position when the folder and the video are both renamed", async () => {
-    const clip = new MemoryFile(createMinimalBmff());
+    const clip = new MemoryFile(bmffWithTrailingFree());
     await clip.embed(3);
     const renamedFolder = renameFolder(
       new Map([["Movies/pikpak/nested/clip.mp4", clip]]),
@@ -148,7 +188,3 @@ describe("renames", () => {
     );
   });
 });
-
-function ascii(value: string): Uint8Array {
-  return Uint8Array.from(value, (char) => char.charCodeAt(0));
-}

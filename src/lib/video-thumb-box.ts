@@ -24,8 +24,8 @@ type Reader = (offset: number, length: number) => Promise<Uint8Array>;
 type Writer = (offset: number, data: Uint8Array) => Promise<void>;
 
 type Inspection =
-  | { kind: "found"; offset: number }
-  | { kind: "absent" }
+  | { kind: "found"; offset: number; lastBoxType: string }
+  | { kind: "absent"; lastBoxType: string }
   | { kind: "unsupported"; reason: string };
 
 function ascii(value: string): Uint8Array {
@@ -138,6 +138,7 @@ async function inspectContainer(
 
   let offset = 0;
   let found: number | null = null;
+  let lastBoxType = "";
   let first = true;
   while (offset + 8 <= fileSize) {
     const header = await read(offset, 16);
@@ -172,6 +173,7 @@ async function inspectContainer(
       return { kind: "unsupported", reason: "Not a video container" };
     }
     first = false;
+    lastBoxType = type;
     if (type === "uuid" && size === THUMB_BOX_SIZE) {
       const box = await read(offset, THUMB_BOX_SIZE);
       if (isThumbBox(box)) {
@@ -185,9 +187,35 @@ async function inspectContainer(
     return { kind: "unsupported", reason: "Container boxes do not cover the file" };
   }
   if (found == null) {
-    return { kind: "absent" };
+    return { kind: "absent", lastBoxType };
   }
-  return { kind: "found", offset: found };
+  return { kind: "found", offset: found, lastBoxType };
+}
+
+/** Byte length browsers should read for playback, omitting a trailing thumb box. */
+export async function playbackEndOffset(
+  fileSize: number,
+  read: Reader,
+): Promise<number> {
+  const inspected = await inspectContainer(fileSize, read);
+  if (inspected.kind !== "found") {
+    return fileSize;
+  }
+  if (inspected.offset + THUMB_BOX_SIZE !== fileSize) {
+    return fileSize;
+  }
+  return inspected.offset;
+}
+
+export async function playbackBlobFromFile(file: File): Promise<Blob> {
+  const end = await playbackEndOffset(file.size, async (offset, length) => {
+    const data = await file.slice(offset, offset + length).arrayBuffer();
+    return new Uint8Array(data);
+  });
+  if (end >= file.size) {
+    return file;
+  }
+  return file.slice(0, end);
 }
 
 export async function readThumbSeek(
@@ -223,6 +251,11 @@ export async function embedThumbSeek(
   const inspected = await inspectContainer(fileSize, read);
   if (inspected.kind === "unsupported") {
     throw new UnsupportedMediaContainerError(inspected.reason);
+  }
+  if (inspected.kind === "absent" && inspected.lastBoxType === "mdat") {
+    throw new UnsupportedMediaContainerError(
+      "Thumbnail metadata cannot be appended after mdat without breaking browser playback",
+    );
   }
 
   const box = createThumbBox(seconds);

@@ -15,6 +15,7 @@ import {
 } from "./scan-folder-files";
 import {
   embedThumbSeek,
+  playbackBlobFromFile,
   readThumbSeekFromBlob,
   UnsupportedMediaContainerError,
 } from "./video-thumb-box";
@@ -565,13 +566,14 @@ class DirectoryVideoAdapter implements VideoStorageAdapter {
   }
 
   async createObjectUrl(entry: VideoFileEntry): Promise<string> {
-    const file =
-      entry.file ??
-      (entry.handle ? await entry.handle.getFile() : null);
+    const file = entry.handle
+      ? await entry.handle.getFile()
+      : (entry.file ?? null);
     if (!file) {
       throw new Error(`File not found: ${entry.path}`);
     }
-    return URL.createObjectURL(file);
+    const playback = await playbackBlobFromFile(file);
+    return URL.createObjectURL(playback);
   }
 
   async loadThumbSeekSeconds(
@@ -813,7 +815,8 @@ class FolderInputVideoAdapter implements VideoStorageAdapter {
     if (!entry.file) {
       throw new Error(`File not found: ${entry.path}`);
     }
-    return URL.createObjectURL(entry.file);
+    const playback = await playbackBlobFromFile(entry.file);
+    return URL.createObjectURL(playback);
   }
 
   async loadThumbSeekSeconds(
