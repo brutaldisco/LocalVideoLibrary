@@ -1,7 +1,9 @@
 import {
+  clampIntervalMs,
   formatInterval,
-  intervalToSlider,
-  sliderToInterval,
+  SLIDESHOW_INTERVAL_MAX_MS,
+  SLIDESHOW_INTERVAL_MIN_MS,
+  SLIDESHOW_INTERVAL_STEP_MS,
 } from "../lib/slideshow-timing";
 
 export function IntervalSlider({
@@ -13,26 +15,25 @@ export function IntervalSlider({
   onChange: (intervalMs: number) => void;
   labelledBy?: string;
 }) {
-  const position = Math.round(intervalToSlider(value) * 1000);
-  const label = formatInterval(value);
+  const position = clampIntervalMs(value);
+  const label = formatInterval(position);
 
   return (
     <label className="interval-control">
       <span id={labelledBy}>Interval</span>
       <input
         type="range"
-        min={0}
-        max={1000}
-        step={1}
+        min={SLIDESHOW_INTERVAL_MIN_MS}
+        max={SLIDESHOW_INTERVAL_MAX_MS}
+        step={SLIDESHOW_INTERVAL_STEP_MS}
         value={position}
         aria-label={`Interval, ${label}`}
-        aria-valuemin={0}
-        aria-valuemax={1000}
+        aria-valuemin={SLIDESHOW_INTERVAL_MIN_MS}
+        aria-valuemax={SLIDESHOW_INTERVAL_MAX_MS}
         aria-valuenow={position}
         aria-valuetext={label}
         onChange={(event) => {
-          const next = sliderToInterval(Number(event.target.value) / 1000);
-          onChange(next);
+          onChange(clampIntervalMs(Number(event.target.value)));
         }}
       />
       <span className="interval-readout">{label}</span>
