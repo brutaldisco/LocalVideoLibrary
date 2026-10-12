@@ -44,11 +44,19 @@ export function loadRepeatMode(): RepeatMode {
   if (typeof window === "undefined") {
     return "folder";
   }
-  return parseRepeatMode(window.localStorage.getItem(STORAGE_KEY));
+  try {
+    return parseRepeatMode(window.localStorage.getItem(STORAGE_KEY));
+  } catch {
+    return "folder";
+  }
 }
 
 export function saveRepeatMode(mode: RepeatMode): void {
-  window.localStorage.setItem(STORAGE_KEY, mode);
+  try {
+    window.localStorage.setItem(STORAGE_KEY, mode);
+  } catch {
+    /* Ignore blocked storage. */
+  }
 }
 
 export function VideoPlayer({

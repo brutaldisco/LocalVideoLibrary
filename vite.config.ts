@@ -40,8 +40,10 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,svg,woff2}"],
-        globIgnores: ["**/icons/**"],
+        globIgnores: ["**/icons/**", "sw-reload.js"],
+        importScripts: ["sw-reload.js"],
         navigateFallback: "/index.html",
+        navigateFallbackDenylist: [/^\/assets\//, /^\/icons\//],
         cleanupOutdatedCaches: true,
         runtimeCaching: [
           {

@@ -125,13 +125,31 @@ const SNAPSHOT_ALBUM_KEY = "lvl-snapshot-album";
 const SLIDESHOW_ALBUM_KEY = "lvl-slideshow-album";
 const FLASH_NOTE_KEY = "lvl-slideshow-flash-note";
 
+function readStorage(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStorage(key: string, value: string | null): void {
+  try {
+    if (value) {
+      window.localStorage.setItem(key, value);
+    } else {
+      window.localStorage.removeItem(key);
+    }
+  } catch {
+    /* Storage can be blocked; the library still has to render. */
+  }
+}
+
 function readLibraryMode(): LibraryMode {
   if (typeof window === "undefined") {
     return "videos";
   }
-  return window.localStorage.getItem(LIBRARY_MODE_KEY) === "slideshows"
-    ? "slideshows"
-    : "videos";
+  return readStorage(LIBRARY_MODE_KEY) === "slideshows" ? "slideshows" : "videos";
 }
 
 function snapshotLabel(item: AlbumItem): string {
@@ -201,14 +219,10 @@ export default function App() {
   const [snapshotNeedsPermission, setSnapshotNeedsPermission] = useState(false);
   const [albums, setAlbums] = useState<SnapshotAlbumSummary[]>([]);
   const [destinationAlbum, setDestinationAlbum] = useState<string | null>(() =>
-    typeof window === "undefined"
-      ? null
-      : window.localStorage.getItem(SNAPSHOT_ALBUM_KEY),
+    typeof window === "undefined" ? null : readStorage(SNAPSHOT_ALBUM_KEY),
   );
   const [viewAlbum, setViewAlbum] = useState<string | null>(() =>
-    typeof window === "undefined"
-      ? null
-      : window.localStorage.getItem(SLIDESHOW_ALBUM_KEY),
+    typeof window === "undefined" ? null : readStorage(SLIDESHOW_ALBUM_KEY),
   );
   const [albumItems, setAlbumItems] = useState<AlbumItem[]>([]);
   const [albumUrls, setAlbumUrls] = useState<Map<string, string>>(new Map());
@@ -220,9 +234,8 @@ export default function App() {
   const [snapshotToast, setSnapshotToast] = useState<string | null>(null);
   const [slideshow, setSlideshow] = useState<{ startIndex: number } | null>(null);
   const [dialogInterval, setDialogInterval] = useState(SLIDESHOW_INTERVAL_DEFAULT_MS);
-  const [flashNoteDismissed, setFlashNoteDismissed] = useState(() =>
-    typeof window !== "undefined" &&
-    window.localStorage.getItem(FLASH_NOTE_KEY) === "1",
+  const [flashNoteDismissed, setFlashNoteDismissed] = useState(
+    () => typeof window !== "undefined" && readStorage(FLASH_NOTE_KEY) === "1",
   );
   const snapshotRootRef = useRef(snapshotRoot);
   snapshotRootRef.current = snapshotRoot;
@@ -492,23 +505,15 @@ export default function App() {
   );
 
   useEffect(() => {
-    window.localStorage.setItem(LIBRARY_MODE_KEY, libraryMode);
+    writeStorage(LIBRARY_MODE_KEY, libraryMode);
   }, [libraryMode]);
 
   useEffect(() => {
-    if (destinationAlbum) {
-      window.localStorage.setItem(SNAPSHOT_ALBUM_KEY, destinationAlbum);
-    } else {
-      window.localStorage.removeItem(SNAPSHOT_ALBUM_KEY);
-    }
+    writeStorage(SNAPSHOT_ALBUM_KEY, destinationAlbum);
   }, [destinationAlbum]);
 
   useEffect(() => {
-    if (viewAlbum) {
-      window.localStorage.setItem(SLIDESHOW_ALBUM_KEY, viewAlbum);
-    } else {
-      window.localStorage.removeItem(SLIDESHOW_ALBUM_KEY);
-    }
+    writeStorage(SLIDESHOW_ALBUM_KEY, viewAlbum);
   }, [viewAlbum]);
 
   useEffect(() => {
@@ -1161,7 +1166,7 @@ export default function App() {
   }
 
   function dismissFlashNote() {
-    window.localStorage.setItem(FLASH_NOTE_KEY, "1");
+    writeStorage(FLASH_NOTE_KEY, "1");
     setFlashNoteDismissed(true);
   }
 

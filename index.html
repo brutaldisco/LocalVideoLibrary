@@ -10,15 +10,75 @@
     <link
       href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap"
       rel="stylesheet"
+      media="print"
+      onload="this.media='all'"
     />
+    <noscript>
+      <link
+        href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap"
+        rel="stylesheet"
+      />
+    </noscript>
     <meta name="apple-mobile-web-app-title" content="lvl" />
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32-poppins.png" />
     <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192-poppins.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon-poppins.png" />
     <title>lvl</title>
   </head>
-  <body>
-    <div id="root"></div>
+  <body style="margin: 0; background: #0b0b0c; color: #f3f4f6">
+    <div id="root">
+      <p id="lvl-boot" style="margin: 0; padding: 24px; font-family: system-ui, sans-serif">
+        Loading…
+      </p>
+    </div>
+    <script>
+      (function () {
+        var key = "lvl-blank-reload";
+        window.setTimeout(function () {
+          if (!document.getElementById("lvl-boot")) {
+            try {
+              sessionStorage.removeItem(key);
+            } catch (error) {
+              /* ignore */
+            }
+            return;
+          }
+          try {
+            if (sessionStorage.getItem(key) === "1") return;
+            sessionStorage.setItem(key, "1");
+          } catch (error) {
+            return;
+          }
+          var reload = function () {
+            location.reload();
+          };
+          if (!("serviceWorker" in navigator)) {
+            reload();
+            return;
+          }
+          navigator.serviceWorker
+            .getRegistrations()
+            .then(function (regs) {
+              return Promise.all(
+                regs.map(function (reg) {
+                  return reg.unregister();
+                }),
+              );
+            })
+            .then(function () {
+              if (!("caches" in window)) return;
+              return caches.keys().then(function (keys) {
+                return Promise.all(
+                  keys.map(function (name) {
+                    return caches.delete(name);
+                  }),
+                );
+              });
+            })
+            .then(reload, reload);
+        }, 3000);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

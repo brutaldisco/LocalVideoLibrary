@@ -3,5 +3,10 @@
   "buildCommand": "pnpm build",
   "outputDirectory": "dist",
   "installCommand": "pnpm install",
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+  "rewrites": [
+    {
+      "source": "/((?!assets/|icons/|sw\\.js$|sw-reload\\.js$|workbox-|manifest\\.webmanifest$).*)",
+      "destination": "/index.html"
+    }
+  ]
 }
