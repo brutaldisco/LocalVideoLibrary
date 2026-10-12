@@ -15,6 +15,7 @@ import {
 } from "./scan-folder-files";
 import {
   embedThumbSeek,
+  hasLegacyThumbBoxFromBlob,
   playbackBlobFromFile,
   readThumbSeekFromBlob,
   UnsupportedMediaContainerError,
@@ -335,9 +336,17 @@ async function absorbSidecar(
   handle: FileSystemFileHandle,
   videoName: string,
 ): Promise<"embedded" | "sidecar"> {
-  const embedded = await readThumbSeekFromBlob(await handle.getFile());
+  const file = await handle.getFile();
+  const embedded = await readThumbSeekFromBlob(file);
   const sidecar = await readSidecarSeekSeconds(parent, videoName);
   if (embedded != null) {
+    if (await hasLegacyThumbBoxFromBlob(file)) {
+      try {
+        await writeEmbeddedThumbSeek(handle, embedded);
+      } catch {
+        // The older box still travels with the file.
+      }
+    }
     if (sidecar != null) {
       await deleteSidecarIfExists(parent, videoName);
     }
@@ -604,8 +613,16 @@ class DirectoryVideoAdapter implements VideoStorageAdapter {
     }
     const parent = await resolveDirectoryHandle(this.root, entry.folderPath);
     const handle = entry.handle ?? (await parent.getFileHandle(entry.name));
-    const embedded = await readThumbSeekFromBlob(await handle.getFile());
+    const file = await handle.getFile();
+    const embedded = await readThumbSeekFromBlob(file);
     if (embedded != null) {
+      if (await hasLegacyThumbBoxFromBlob(file)) {
+        try {
+          await writeEmbeddedThumbSeek(handle, embedded);
+        } catch {
+          // Keep the saved position visible until a later write can convert it.
+        }
+      }
       await deleteSidecarIfExists(parent, entry.name);
       return embedded;
     }

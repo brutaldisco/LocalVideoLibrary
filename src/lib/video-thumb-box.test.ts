@@ -69,6 +69,13 @@ function ascii(value: string): Uint8Array {
   return Uint8Array.from(value, (char) => char.charCodeAt(0));
 }
 
+function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
+  const out = new Uint8Array(left.length + right.length);
+  out.set(left);
+  out.set(right, left.length);
+  return out;
+}
+
 function encodeFreeBox(): Uint8Array {
   const payload = new Uint8Array(8);
   const out = new Uint8Array(16);
@@ -97,12 +104,45 @@ describe("thumb box", () => {
     expect(await file.seek()).toBe(304.989895);
   });
 
-  it("rejects append after mdat so browsers can keep playing the file", async () => {
-    const file = new MemoryFile(createMinimalBmff());
-    await expect(file.embed(12)).rejects.toBeInstanceOf(
-      UnsupportedMediaContainerError,
-    );
-    expect(file.bytes.length).toBe(createMinimalBmff().length);
+  it("appends after mdat and omits that box during playback", async () => {
+    const original = createMinimalBmff();
+    const file = new MemoryFile(original);
+    await file.embed(12);
+    expect(file.bytes.length).toBe(original.length + THUMB_BOX_SIZE);
+    expect(file.bytes.slice(0, original.length)).toEqual(original);
+    expect(await file.seek()).toBe(12);
+    const end = await playbackEndOffset(file.bytes.length, file.read);
+    expect(end).toBe(original.length);
+  });
+
+  it("uses the shared uuid layout", () => {
+    const box = createThumbBox(1.5);
+    expect(box.length).toBe(280);
+    expect(String.fromCharCode(...box.subarray(4, 8))).toBe("uuid");
+    expect([...box.subarray(8, 24)]).toEqual([
+      0x3f, 0x6a, 0x0c, 0x1e, 0x8b, 0x24, 0x4d, 0x7a, 0x9f, 0x50, 0x6c, 0x1e,
+      0x8a, 0x4b, 0x2d, 0x90,
+    ]);
+    expect(new DataView(box.buffer).getFloat64(32, false)).toBe(1.5);
+  });
+
+  it("moves a legacy 64-byte box into the shared box", async () => {
+    const media = createMinimalBmff();
+    const legacy = new Uint8Array(64);
+    const view = new DataView(legacy.buffer);
+    view.setUint32(0, 64, false);
+    legacy.set(ascii("uuid"), 4);
+    legacy.set(ascii("lvl-thumb-seek01"), 8);
+    legacy[24] = 1;
+    legacy[25] = 1;
+    view.setFloat64(28, 9, false);
+    const file = new MemoryFile(concatBytes(media, legacy));
+    expect(await file.seek()).toBe(9);
+    await file.embed(9);
+    expect(file.bytes.length).toBe(media.length + THUMB_BOX_SIZE);
+    expect(file.bytes.slice(0, media.length)).toEqual(media);
+    expect(new TextDecoder().decode(file.bytes)).not.toContain("lvl-thumb-seek01");
+    expect(await file.seek()).toBe(9);
   });
 
   it("strips a trailing thumb box for playback", async () => {
