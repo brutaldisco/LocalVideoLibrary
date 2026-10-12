@@ -4,8 +4,10 @@ import {
   createThumbBox,
   embedThumbSeek,
   parseThumbBox,
+  playbackBlobFromFile,
   playbackEndOffset,
   readThumbSeek,
+  videoContentType,
   THUMB_BOX_SIZE,
   UnsupportedMediaContainerError,
 } from "./video-thumb-box";
@@ -226,5 +228,25 @@ describe("renames", () => {
     expect(await renamedFolder.get("Movies/archive/nested/scene.mp4")?.seek()).toBe(
       3,
     );
+  });
+});
+
+describe("videoContentType", () => {
+  it("keeps a video type and fills in an empty one from the file name", () => {
+    expect(videoContentType("clip.mp4", "video/mp4")).toBe("video/mp4");
+    expect(videoContentType("clip.mov", "")).toBe("video/quicktime");
+    expect(videoContentType("clip.webm", "application/octet-stream")).toBe(
+      "video/webm",
+    );
+  });
+});
+
+describe("playbackBlobFromFile", () => {
+  it("gives a typeless file a video type without dropping bytes", async () => {
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const file = new File([bytes], "phone.mp4", { type: "" });
+    const blob = await playbackBlobFromFile(file);
+    expect(blob.type).toBe("video/mp4");
+    expect(new Uint8Array(await blob.arrayBuffer())).toEqual(bytes);
   });
 });

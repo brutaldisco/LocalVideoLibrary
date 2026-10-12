@@ -6,8 +6,11 @@ type FullscreenDocument = Document & {
 type FullscreenElement = HTMLElement & {
   webkitRequestFullscreen?: () => void;
   webkitEnterFullscreen?: () => void;
+  webkitExitFullscreen?: () => void;
   webkitDisplayingFullscreen?: boolean;
 };
+
+type FullscreenVideo = HTMLVideoElement & FullscreenElement;
 
 export function getFullscreenElement(): Element | null {
   if (typeof document === "undefined") {
@@ -28,10 +31,25 @@ export function isFullscreen(el?: Element | null): boolean {
   return current === el;
 }
 
-export async function requestFullscreen(el: HTMLElement): Promise<void> {
+function videoElement(
+  el: HTMLElement,
+  video?: HTMLVideoElement | null,
+): FullscreenVideo | null {
+  return (video ?? el.querySelector("video")) as FullscreenVideo | null;
+}
+
+export async function requestFullscreen(
+  el: HTMLElement,
+  video?: HTMLVideoElement | null,
+): Promise<void> {
   const target = el as FullscreenElement;
-  if (el.requestFullscreen) {
+  if (el.requestFullscreen && document.fullscreenEnabled) {
     await el.requestFullscreen();
+    return;
+  }
+  const media = videoElement(el, video);
+  if (media?.webkitEnterFullscreen) {
+    media.webkitEnterFullscreen();
     return;
   }
   if (target.webkitEnterFullscreen) {
@@ -41,7 +59,12 @@ export async function requestFullscreen(el: HTMLElement): Promise<void> {
   target.webkitRequestFullscreen?.();
 }
 
-export async function exitFullscreen(): Promise<void> {
+export async function exitFullscreen(video?: HTMLVideoElement | null): Promise<void> {
+  const media = video as FullscreenVideo | null;
+  if (media?.webkitDisplayingFullscreen && media.webkitExitFullscreen) {
+    media.webkitExitFullscreen();
+    return;
+  }
   const doc = document as FullscreenDocument;
   if (document.exitFullscreen && getFullscreenElement()) {
     await document.exitFullscreen();

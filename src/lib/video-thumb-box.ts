@@ -257,15 +257,34 @@ export async function playbackEndOffset(
   return trailingPlaybackEnd(scan);
 }
 
+const EXTENSION_CONTENT_TYPE: Record<string, string> = {
+  mp4: "video/mp4",
+  m4v: "video/mp4",
+  mov: "video/quicktime",
+  webm: "video/webm",
+  ogv: "video/ogg",
+  ogg: "video/ogg",
+};
+
+/** iOS will not play a blob URL whose type is empty. */
+export function videoContentType(name: string, type: string): string {
+  if (type.startsWith("video/")) {
+    return type;
+  }
+  const extension = name.split(".").pop()?.toLowerCase() ?? "";
+  return EXTENSION_CONTENT_TYPE[extension] ?? "video/mp4";
+}
+
 export async function playbackBlobFromFile(file: File): Promise<Blob> {
+  const type = videoContentType(file.name, file.type);
   const end = await playbackEndOffset(file.size, async (offset, length) => {
     const data = await file.slice(offset, offset + length).arrayBuffer();
     return new Uint8Array(data);
   });
-  if (end >= file.size) {
+  if (end >= file.size && file.type === type) {
     return file;
   }
-  return file.slice(0, end);
+  return file.slice(0, Math.min(end, file.size), type);
 }
 
 export async function readThumbSeek(

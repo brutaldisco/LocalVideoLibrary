@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { prefersCoarsePointer } from "../lib/pointer";
 import {
   exitFullscreen,
   getFullscreenElement,
@@ -156,14 +157,27 @@ export function VideoPlayer({
       const shell = shellRef.current;
       const video = videoRef.current;
       setShellFullscreen(Boolean(shell && getFullscreenElement() === shell));
-      if (shell && video && getFullscreenElement() === video) {
+      if (
+        shell &&
+        video &&
+        document.fullscreenEnabled &&
+        getFullscreenElement() === video
+      ) {
         void exitFullscreen()
-          .then(() => requestFullscreen(shell))
+          .then(() => requestFullscreen(shell, video))
           .catch(() => undefined);
       }
     }
     sync();
-    return subscribeFullscreen(sync);
+    const video = videoRef.current;
+    video?.addEventListener("webkitbeginfullscreen", sync);
+    video?.addEventListener("webkitendfullscreen", sync);
+    const unsubscribe = subscribeFullscreen(sync);
+    return () => {
+      video?.removeEventListener("webkitbeginfullscreen", sync);
+      video?.removeEventListener("webkitendfullscreen", sync);
+      unsubscribe();
+    };
   }, []);
 
   function focusShell() {
@@ -252,6 +266,9 @@ export function VideoPlayer({
   }
 
   function scheduleChromeHide() {
+    if (prefersCoarsePointer()) {
+      return;
+    }
     clearIdleTimer();
     idleTimerRef.current = window.setTimeout(() => {
       idleTimerRef.current = null;
@@ -306,10 +323,12 @@ export function VideoPlayer({
   }, [menuOpen]);
 
   useEffect(() => {
-    idleTimerRef.current = window.setTimeout(() => {
-      idleTimerRef.current = null;
-      setChromeVisible(false);
-    }, IDLE_HIDE_MS);
+    if (!prefersCoarsePointer()) {
+      idleTimerRef.current = window.setTimeout(() => {
+        idleTimerRef.current = null;
+        setChromeVisible(false);
+      }, IDLE_HIDE_MS);
+    }
     return () => {
       if (idleTimerRef.current != null) {
         window.clearTimeout(idleTimerRef.current);
@@ -326,11 +345,13 @@ export function VideoPlayer({
     if (!shell) {
       return;
     }
-    if (getFullscreenElement() === shell) {
-      await exitFullscreen().catch(() => undefined);
-      return;
+    const video = videoRef.current;
+    if (getFullscreenElement() === shell || isFullscreen(video)) {
+      await exitFullscreen(video).catch(() => undefined);
+    } else {
+      await requestFullscreen(shell, video).catch(() => undefined);
     }
-    await requestFullscreen(shell).catch(() => undefined);
+    setShellFullscreen(getFullscreenElement() === shell || isFullscreen(video));
   }
 
   function clearSurfaceClick() {
@@ -656,6 +677,7 @@ export function VideoPlayer({
           controls
           autoPlay
           playsInline
+          preload="metadata"
           controlsList="nofullscreen"
           loop={repeat === "one"}
           tabIndex={-1}
@@ -690,8 +712,18 @@ export function VideoPlayer({
           type="button"
           aria-label={paused ? "Play" : "Pause"}
           className={`video-player-surface ${chromeVisible ? "video-player-surface--active" : "video-player-surface--idle"}`}
-          style={{ bottom: chromeVisible ? CONTROL_BAR_PX : 0 }}
+          style={{
+            bottom:
+              chromeVisible || prefersCoarsePointer()
+                ? prefersCoarsePointer()
+                  ? 96
+                  : CONTROL_BAR_PX
+                : 0,
+          }}
           onMouseDown={(event) => {
+            if (event.detail === 0 || prefersCoarsePointer()) {
+              return;
+            }
             event.preventDefault();
           }}
           onClick={onSurfaceClick}

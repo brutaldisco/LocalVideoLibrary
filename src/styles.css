@@ -1,5 +1,6 @@
 :root {
   color-scheme: dark;
+  -webkit-text-size-adjust: 100%;
   font-family:
     Inter,
     system-ui,
@@ -32,6 +33,24 @@ body,
 body {
   margin: 0;
   background: var(--background, #0b0b0c);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+body:has(.video-player-shell),
+body:has(.slideshow-shell) {
+  overflow: hidden;
+}
+
+.folder-input {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+  border: 0;
 }
 
 button,
@@ -126,6 +145,7 @@ select {
   color: inherit;
   border-radius: 8px;
   padding: 8px 10px;
+  font-size: 16px;
 }
 
 .search-input {
@@ -143,6 +163,7 @@ select {
   border-radius: 8px;
   padding: 8px 12px;
   cursor: pointer;
+  touch-action: manipulation;
 }
 
 .btn:hover:not(:disabled) {
@@ -668,12 +689,19 @@ select {
   background: rgb(0 0 0 / 60%);
   display: grid;
   place-items: center;
-  padding: 16px;
+  padding:
+    max(16px, env(safe-area-inset-top))
+    max(16px, env(safe-area-inset-right))
+    max(16px, env(safe-area-inset-bottom))
+    max(16px, env(safe-area-inset-left));
+  overflow: auto;
   z-index: 40;
 }
 
 .dialog {
   width: min(480px, 100%);
+  max-height: 90dvh;
+  overflow: auto;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -716,6 +744,11 @@ select {
   background: #000;
   color: #fff;
   color-scheme: dark;
+  padding:
+    env(safe-area-inset-top)
+    env(safe-area-inset-right)
+    env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
 }
 
 .video-player-shell video:focus,
@@ -911,6 +944,7 @@ select {
   background: transparent;
   color: #fff;
   cursor: pointer;
+  touch-action: manipulation;
 }
 
 .video-player-icon-button:hover:not(:disabled) {
@@ -970,6 +1004,16 @@ select {
     height: auto;
     min-height: 100dvh;
     overflow: visible;
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
+  .sidebar-header {
+    flex-wrap: wrap;
+  }
+
+  .sidebar-header h1 {
+    flex: 1 1 100%;
   }
 
   .sidebar {
@@ -988,6 +1032,26 @@ select {
 
   .search-input {
     min-width: 100%;
+  }
+}
+
+@media (pointer: coarse) {
+  .btn,
+  .slideshow-text-btn,
+  .mode-switch button,
+  .folder-item {
+    min-height: 44px;
+  }
+
+  .video-player-icon-button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .video-select {
+    top: 0;
+    left: 0;
+    padding: 12px;
   }
 }
 
@@ -1072,6 +1136,7 @@ select {
   cursor: pointer;
   padding: 8px 2px;
   font: inherit;
+  touch-action: manipulation;
 }
 
 .flash-note-inline {
@@ -1295,6 +1360,11 @@ p.video-player-menu-sub {
   flex-direction: column;
   background: #000;
   color: #fff;
+  padding:
+    env(safe-area-inset-top)
+    env(safe-area-inset-right)
+    env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
 }
 
 .slideshow-shell:focus {

@@ -88,6 +88,7 @@ import {
   SLIDESHOW_INTERVAL_DEFAULT_MS,
   formatInterval,
 } from "./lib/slideshow-timing";
+import { isIosDevice } from "./lib/pointer";
 import {
   createDirectoryAdapter,
   createFolderInputAdapter,
@@ -1319,9 +1320,9 @@ export default function App() {
     <div className="app-shell">
       <input
         ref={folderInputRef}
+        className="folder-input"
         type="file"
         multiple
-        hidden
         {...{ webkitdirectory: "", directory: "" }}
         onChange={(event) => void handleFolderInputChange(event)}
       />
@@ -1743,6 +1744,9 @@ export default function App() {
               Choose a folder on this device. Videos stay on disk; nothing is
               uploaded or cached in the browser.
             </p>
+            {isIosDevice() ? (
+              <p>In the picker, open the folder, then tap Open.</p>
+            ) : null}
             {supportsDirectoryPicker() ? (
               <button type="button" className="btn outline" onClick={() => void handleOpenDirectory()}>
                 <FolderOpen size={16} />

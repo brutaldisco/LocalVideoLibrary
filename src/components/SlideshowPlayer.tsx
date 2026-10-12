@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { prefersCoarsePointer } from "../lib/pointer";
 import {
   nextSlideshowIndex,
   slideshowLayers,
@@ -227,6 +228,9 @@ export function SlideshowPlayer({
   }
 
   function scheduleHide() {
+    if (prefersCoarsePointer()) {
+      return;
+    }
     clearIdle();
     idleTimerRef.current = window.setTimeout(() => {
       idleTimerRef.current = null;
@@ -256,6 +260,10 @@ export function SlideshowPlayer({
       ref={shellRef}
       tabIndex={-1}
       className={`slideshow-shell ${chromeVisible ? "" : "slideshow-shell--chrome-hidden"}`}
+      onPointerDown={() => {
+        setChromeVisible(true);
+        scheduleHide();
+      }}
       onPointerMove={() => {
         setChromeVisible(true);
         scheduleHide();
