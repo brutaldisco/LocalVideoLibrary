@@ -1336,8 +1336,17 @@ p.video-player-menu-sub {
   background: #000;
 }
 
-.slideshow-image.is-incoming {
+.slideshow-image.is-upcoming {
+  z-index: 0;
+  opacity: 0;
+}
+
+.slideshow-image.is-outgoing {
   z-index: 1;
+}
+
+.slideshow-image.is-incoming {
+  z-index: 2;
   opacity: 0;
   transition: opacity linear;
 }

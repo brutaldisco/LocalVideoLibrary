@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from "react";
+import {
+  nextSlideshowIndex,
+  slideshowLayers,
+} from "../lib/slideshow-layers";
 import { isVideoPlayerTypingTarget } from "../lib/video-player-keys";
 import {
   SLIDESHOW_FLASH_NOTICE_MS,
+  clampIntervalMs,
+  nextDeadline,
   nextIntervalStep,
 } from "../lib/slideshow-timing";
 import { IntervalSlider } from "./IntervalSlider";
@@ -67,7 +73,7 @@ export function SlideshowPlayer({
   intervalRef.current = intervalMs;
   const playingRef = useRef(playing);
   playingRef.current = playing;
-  const readyRef = useRef(new Set<string>());
+  const decodedRef = useRef(new Map<string, HTMLImageElement>());
   const idleTimerRef = useRef<number | null>(null);
   const shellRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
@@ -101,29 +107,18 @@ export function SlideshowPlayer({
   }, [previousIndex, fadeMs]);
 
   useEffect(() => {
-    const ready = readyRef.current;
-    const list = slidesRef.current;
-    if (list.length === 0) {
-      return;
-    }
-    let cancelled = false;
-    for (let offset = 0; offset < Math.min(4, list.length); offset += 1) {
-      const slide = list[(index + offset) % list.length];
-      if (!slide || ready.has(slide.url)) {
+    const cache = decodedRef.current;
+    for (const slide of slides) {
+      if (cache.has(slide.url)) {
         continue;
       }
       const image = new Image();
-      image.onload = () => {
-        if (!cancelled) {
-          ready.add(slide.url);
-        }
-      };
+      image.decoding = "async";
       image.src = slide.url;
+      cache.set(slide.url, image);
+      void image.decode?.().catch(() => undefined);
     }
-    return () => {
-      cancelled = true;
-    };
-  }, [index, slides]);
+  }, [slides]);
 
   function reveal(next: number) {
     const current = indexRef.current;
@@ -142,7 +137,7 @@ export function SlideshowPlayer({
   }
 
   useEffect(() => {
-    if (!playing || slides.length === 0) {
+    if (!playing || slides.length < 2) {
       return;
     }
     let stopped = false;
@@ -151,32 +146,24 @@ export function SlideshowPlayer({
     let timer = 0;
 
     const arm = () => {
-      const interval = intervalRef.current;
-      const deadline = origin + (advances + 1) * interval;
+      const interval = clampIntervalMs(intervalRef.current);
+      const deadline = nextDeadline(origin, advances, interval);
       const delay = Math.max(0, deadline - performance.now());
       timer = window.setTimeout(() => {
         if (stopped) {
           return;
         }
         advances += 1;
-        const list = slidesRef.current;
-        const length = list.length;
+        const length = slidesRef.current.length;
         if (length > 1) {
           const current = indexRef.current;
-          let chosen: number | null = null;
-          for (let hop = 1; hop < length; hop += 1) {
-            const candidate = (current + hop) % length;
-            if (readyRef.current.has(list[candidate]?.url ?? "")) {
-              chosen = candidate;
-              break;
-            }
+          const next = nextSlideshowIndex(current, length);
+          if (fadeMsRef.current > 0) {
+            setPreviousIndex(current);
+          } else {
+            setPreviousIndex(null);
           }
-          if (chosen != null && chosen !== current) {
-            if (fadeMsRef.current > 0) {
-              setPreviousIndex(current);
-            }
-            setIndex(chosen);
-          }
+          setIndex(next);
         }
         arm();
       }, delay);
@@ -252,8 +239,8 @@ export function SlideshowPlayer({
     return () => clearIdle();
   }, []);
 
-  const slide = slides[index];
-  const previous = previousIndex != null ? slides[previousIndex] : undefined;
+  const fade = fadeMs > 0;
+  const layers = slideshowLayers(slides, index, previousIndex, fade);
   const flashVisible = showFlashNote && intervalMs < SLIDESHOW_FLASH_NOTICE_MS;
 
   function step(delta: number) {
@@ -290,23 +277,31 @@ export function SlideshowPlayer({
       </div>
 
       <div className="slideshow-stage">
-        {previous && fadeMs > 0 ? (
-          <img src={previous.url} alt="" className="slideshow-image" />
-        ) : null}
-        {slide ? (
-          <img
-            src={slide.url}
-            alt={slide.label}
-            className={`slideshow-image${
-              previous != null && fadeMs > 0 ? " is-incoming" : ""
-            }${previousFading ? " is-shown" : ""}`}
-            style={
-              previous != null && fadeMs > 0
-                ? { transitionDuration: `${fadeMs}ms` }
-                : undefined
-            }
-          />
-        ) : null}
+        {layers.map((layer) => {
+          const incoming = layer.role === "current" && fade && previousIndex != null;
+          const className = [
+            "slideshow-image",
+            layer.role === "upcoming" ? "is-upcoming" : "",
+            layer.role === "outgoing" ? "is-outgoing" : "",
+            incoming ? "is-incoming" : "",
+            incoming && previousFading ? "is-shown" : "",
+          ]
+            .filter(Boolean)
+            .join(" ");
+          return (
+            <img
+              key={layer.item.url}
+              src={layer.item.url}
+              alt={layer.role === "current" ? layer.item.label : ""}
+              data-index={layer.index}
+              decoding="async"
+              className={className}
+              style={
+                incoming ? { transitionDuration: `${fadeMs}ms` } : undefined
+              }
+            />
+          );
+        })}
       </div>
 
       <div
