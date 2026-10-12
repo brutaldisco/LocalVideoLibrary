@@ -66,6 +66,18 @@ export function VideoPlayer({
   errorMessage,
   onUseCurrentFrameAsThumbnail,
   thumbnailSaved,
+  snapshotsAvailable = false,
+  hasSnapshotRoot = false,
+  snapshotNeedsPermission = false,
+  snapshotDestination = null,
+  snapshotAlbums = [],
+  snapshotToast = null,
+  onTakeSnapshot,
+  onPickSnapshotAlbum,
+  onCreateSnapshotAlbum,
+  onChooseSnapshotFolder,
+  onAllowSnapshotAccess,
+  onViewSnapshotToast,
 }: {
   url: string;
   title: string;
@@ -81,6 +93,18 @@ export function VideoPlayer({
   errorMessage?: string | null;
   onUseCurrentFrameAsThumbnail?: (currentTime: number) => void;
   thumbnailSaved?: boolean;
+  snapshotsAvailable?: boolean;
+  hasSnapshotRoot?: boolean;
+  snapshotNeedsPermission?: boolean;
+  snapshotDestination?: string | null;
+  snapshotAlbums?: { name: string; count: number }[];
+  snapshotToast?: string | null;
+  onTakeSnapshot?: (video: HTMLVideoElement) => Promise<void>;
+  onPickSnapshotAlbum?: (name: string, video: HTMLVideoElement) => Promise<void>;
+  onCreateSnapshotAlbum?: (name: string, video: HTMLVideoElement) => Promise<void>;
+  onChooseSnapshotFolder?: () => void;
+  onAllowSnapshotAccess?: () => void;
+  onViewSnapshotToast?: () => void;
 }) {
   const shellRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -91,7 +115,17 @@ export function VideoPlayer({
   const [paused, setPaused] = useState(false);
   const [chromeVisible, setChromeVisible] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerError, setPickerError] = useState<string | null>(null);
+  const [albumDraft, setAlbumDraft] = useState("");
+  const [frameReady, setFrameReady] = useState(false);
+  const [snapshotSaved, setSnapshotSaved] = useState(false);
+  const [captureError, setCaptureError] = useState<string | null>(null);
+  const [shutterOn, setShutterOn] = useState(false);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const pickerOpenRef = useRef(false);
+  pickerOpenRef.current = pickerOpen;
+  const takeSnapshotRef = useRef<() => void>(() => undefined);
 
   useLayoutEffect(() => {
     const el = videoRef.current;
@@ -141,6 +175,13 @@ export function VideoPlayer({
       if (!action) {
         return;
       }
+      if (action === "close" && pickerOpenRef.current) {
+        event.preventDefault();
+        event.stopPropagation();
+        setPickerOpen(false);
+        setPickerError(null);
+        return;
+      }
       if (isVideoPlayerTypingTarget(event.target)) {
         return;
       }
@@ -156,6 +197,10 @@ export function VideoPlayer({
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
+      if (action === "snapshot") {
+        takeSnapshotRef.current();
+        return;
+      }
       if (action === "next") {
         onNext();
         return;
@@ -208,12 +253,36 @@ export function VideoPlayer({
 
   function onPointerActivity() {
     setChromeVisible(true);
+    if (menuOpen) {
+      clearIdleTimer();
+      return;
+    }
     scheduleChromeHide();
   }
 
   useEffect(() => {
     setMenuOpen(false);
+    setPickerOpen(false);
+    setFrameReady(false);
+    setSnapshotSaved(false);
+    setCaptureError(null);
   }, [url]);
+
+  useEffect(() => {
+    if (!snapshotSaved) {
+      return;
+    }
+    const timer = window.setTimeout(() => setSnapshotSaved(false), 1800);
+    return () => window.clearTimeout(timer);
+  }, [snapshotSaved]);
+
+  useEffect(() => {
+    if (!menuOpen) {
+      return;
+    }
+    setChromeVisible(true);
+    clearIdleTimer();
+  }, [menuOpen]);
 
   useEffect(() => {
     if (!menuOpen) {
@@ -290,6 +359,69 @@ export function VideoPlayer({
     onUseCurrentFrameAsThumbnail(video.currentTime);
   }
 
+  const canCapture = snapshotsAvailable && frameReady;
+  const snapshotHint = !snapshotsAvailable
+    ? "Available in Chrome and Edge"
+    : !frameReady
+      ? "Wait until the picture appears"
+      : snapshotDestination
+        ? snapshotDestination
+        : "Choose album";
+
+  async function runCapture(action: (video: HTMLVideoElement) => Promise<void>) {
+    const video = videoRef.current;
+    if (!video || !canCapture) {
+      return;
+    }
+    setCaptureError(null);
+    setPickerError(null);
+    try {
+      await action(video);
+      setSnapshotSaved(true);
+      setPickerOpen(false);
+      setMenuOpen(false);
+      const reduced =
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (!reduced) {
+        setShutterOn(true);
+        window.setTimeout(() => setShutterOn(false), 140);
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Could not save snapshot";
+      if (pickerOpenRef.current) {
+        setPickerError(message);
+      } else {
+        setCaptureError(message);
+      }
+    }
+  }
+
+  function takeSnapshot() {
+    if (!canCapture) {
+      return;
+    }
+    if (!snapshotDestination || !hasSnapshotRoot || snapshotNeedsPermission) {
+      setMenuOpen(true);
+      setPickerOpen(true);
+      setChromeVisible(true);
+      return;
+    }
+    if (!onTakeSnapshot) {
+      return;
+    }
+    void runCapture(onTakeSnapshot);
+  }
+
+  takeSnapshotRef.current = takeSnapshot;
+
+  function openSnapshotPicker() {
+    setPickerError(null);
+    setPickerOpen(true);
+    setMenuOpen(true);
+    setChromeVisible(true);
+  }
+
   const chromeHiddenClass = chromeVisible
     ? "video-player-chrome-visible"
     : "video-player-chrome-hidden";
@@ -316,31 +448,183 @@ export function VideoPlayer({
           </p>
         </div>
         <div className="video-player-top-actions">
-          {onUseCurrentFrameAsThumbnail ? (
+          {onUseCurrentFrameAsThumbnail || onTakeSnapshot ? (
             <div className="video-player-menu-wrap" ref={menuRef}>
               <IconButton
                 label="More options"
                 pressed={menuOpen}
-                onClick={() => setMenuOpen((open) => !open)}
+                onClick={() => {
+                  setMenuOpen((open) => !open);
+                  setPickerOpen(false);
+                }}
               >
                 <MoreVerticalIcon />
               </IconButton>
               {menuOpen ? (
-                <div className="video-player-menu" role="menu">
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className={`video-player-menu-item ${thumbnailSaved ? "is-saved" : ""}`}
-                    disabled={!url}
-                    onClick={() => {
-                      handleUseCurrentFrameAsThumbnail();
-                      setMenuOpen(false);
-                    }}
-                  >
-                    {thumbnailSaved
-                      ? "Thumbnail saved"
-                      : "Use current frame as thumbnail"}
-                  </button>
+                <div
+                  className={`video-player-menu ${pickerOpen ? "is-picker" : ""}`}
+                  role="menu"
+                >
+                  {pickerOpen ? (
+                    <div className="snapshot-picker">
+                      <p className="snapshot-picker-title">Save snapshot to</p>
+                      {!hasSnapshotRoot ? (
+                        <>
+                          <p className="snapshot-picker-copy">
+                            Snapshots are saved as image files in a folder you
+                            choose.
+                          </p>
+                          <button
+                            type="button"
+                            className="btn primary"
+                            onClick={onChooseSnapshotFolder}
+                          >
+                            Choose folder
+                          </button>
+                        </>
+                      ) : snapshotNeedsPermission ? (
+                        <>
+                          <p className="snapshot-picker-copy">
+                            Allow access to the snapshot folder to save this frame.
+                          </p>
+                          <button
+                            type="button"
+                            className="btn primary"
+                            onClick={onAllowSnapshotAccess}
+                          >
+                            Allow access
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          {snapshotAlbums.length > 0 ? (
+                            <div className="video-player-album-list">
+                              {snapshotAlbums.map((album, albumIndex) => (
+                                <button
+                                  key={album.name}
+                                  type="button"
+                                  role="menuitem"
+                                  className="video-player-menu-item"
+                                  autoFocus={albumIndex === 0}
+                                  onClick={() => {
+                                    if (!onPickSnapshotAlbum) {
+                                      return;
+                                    }
+                                    void runCapture((video) =>
+                                      onPickSnapshotAlbum(album.name, video),
+                                    );
+                                  }}
+                                >
+                                  <span className="snapshot-album-name">
+                                    {album.name}
+                                  </span>
+                                  <span className="video-player-menu-kbd">
+                                    {album.count}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                          <form
+                            className="snapshot-create"
+                            onSubmit={(event) => {
+                              event.preventDefault();
+                              const name = albumDraft.trim();
+                              if (!name || !onCreateSnapshotAlbum) {
+                                return;
+                              }
+                              void runCapture(async (video) => {
+                                await onCreateSnapshotAlbum(name, video);
+                                setAlbumDraft("");
+                              });
+                            }}
+                          >
+                            <p className="snapshot-picker-label">New album</p>
+                            <div className="snapshot-create-row">
+                              <input
+                                className="dialog-input"
+                                value={albumDraft}
+                                placeholder="Album name"
+                                aria-label="Album name"
+                                autoFocus={snapshotAlbums.length === 0}
+                                onChange={(event) =>
+                                  setAlbumDraft(event.target.value)
+                                }
+                              />
+                              <button
+                                type="submit"
+                                className="btn primary"
+                                disabled={!albumDraft.trim()}
+                              >
+                                Create
+                              </button>
+                            </div>
+                            <p className="snapshot-picker-copy">
+                              Interval starts at 1.0 s
+                            </p>
+                          </form>
+                        </>
+                      )}
+                      {pickerError ? (
+                        <p className="snapshot-picker-error">{pickerError}</p>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <>
+                      {onUseCurrentFrameAsThumbnail ? (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className={`video-player-menu-item ${thumbnailSaved ? "is-saved" : ""}`}
+                          disabled={!url}
+                          onClick={() => {
+                            handleUseCurrentFrameAsThumbnail();
+                            setMenuOpen(false);
+                          }}
+                        >
+                          <span>
+                            {thumbnailSaved
+                              ? "Thumbnail saved"
+                              : "Use current frame as thumbnail"}
+                          </span>
+                        </button>
+                      ) : null}
+                      {onTakeSnapshot ? (
+                        <div className="snapshot-menu-block">
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className={`video-player-menu-item ${snapshotSaved ? "is-saved" : ""}`}
+                            disabled={!canCapture}
+                            onClick={() => takeSnapshot()}
+                          >
+                            <span>
+                              {snapshotSaved
+                                ? "Snapshot saved"
+                                : snapshotDestination
+                                  ? "Take snapshot"
+                                  : "Take snapshot…"}
+                            </span>
+                            {canCapture ? (
+                              <span className="video-player-menu-kbd">S</span>
+                            ) : null}
+                          </button>
+                          {snapshotDestination && canCapture ? (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="video-player-menu-sub"
+                              onClick={openSnapshotPicker}
+                            >
+                              {snapshotDestination}
+                            </button>
+                          ) : (
+                            <p className="video-player-menu-sub">{snapshotHint}</p>
+                          )}
+                        </div>
+                      ) : null}
+                    </>
+                  )}
                 </div>
               ) : null}
             </div>
@@ -377,7 +661,9 @@ export function VideoPlayer({
           }}
           onPlay={() => setPaused(false)}
           onPause={() => setPaused(true)}
+          onCanPlay={() => setFrameReady(true)}
           onLoadedData={(event) => {
+            setFrameReady(true);
             void event.currentTarget.play().catch(() => undefined);
           }}
           onEnded={() => {
@@ -440,6 +726,20 @@ export function VideoPlayer({
           })}
         </div>
       </div>
+      {shutterOn ? <div className="video-player-shutter is-active" /> : null}
+      {captureError || snapshotToast ? (
+        <div
+          className={`video-player-toast ${captureError ? "is-error" : ""}`}
+          role={captureError ? "alert" : "status"}
+        >
+          <span>{captureError ?? snapshotToast}</span>
+          {!captureError && onViewSnapshotToast ? (
+            <button type="button" onClick={onViewSnapshotToast}>
+              View
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

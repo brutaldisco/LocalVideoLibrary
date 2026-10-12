@@ -17,6 +17,9 @@ import {
   useState,
 } from "react";
 import { FolderRowMenu } from "./components/FolderRowMenu";
+import { IntervalSlider } from "./components/IntervalSlider";
+import { SnapshotGallery, type SnapshotCard } from "./components/SnapshotGallery";
+import { SlideshowPlayer } from "./components/SlideshowPlayer";
 import { VideoCardMenu } from "./components/VideoCardMenu";
 import {
   loadRepeatMode,
@@ -63,6 +66,27 @@ import {
   stepPlaylist,
 } from "./lib/video-playlist";
 import { folderInputRootName } from "./lib/scan-folder-files";
+import { captureVideoFrame } from "./lib/snapshot-capture";
+import type { AlbumItem } from "./lib/snapshot-manifest";
+import {
+  createSnapshotAlbum,
+  deleteSnapshotAlbum,
+  deleteSnapshotImage,
+  ensureSnapshotWrite,
+  listSnapshotAlbums,
+  loadSnapshotRoot,
+  readAlbum,
+  renameSnapshotAlbum,
+  saveSnapshotRoot,
+  setAlbumInterval as saveAlbumInterval,
+  writeSnapshotImage,
+  type SnapshotAlbumSummary,
+} from "./lib/snapshot-storage";
+import { nextSnapshotToast, type SnapshotToastBurst } from "./lib/snapshot-toast";
+import {
+  SLIDESHOW_INTERVAL_DEFAULT_MS,
+  formatInterval,
+} from "./lib/slideshow-timing";
 import {
   createDirectoryAdapter,
   createFolderInputAdapter,
@@ -80,6 +104,10 @@ type DialogState =
   | { type: "create-folder" }
   | { type: "rename-folder"; folderPath: string; currentName: string }
   | { type: "delete-folder"; folderPath: string; folderName: string }
+  | { type: "create-album" }
+  | { type: "rename-album"; name: string }
+  | { type: "delete-album"; name: string; count: number }
+  | { type: "delete-snapshot"; album: string; file: string }
   | null;
 
 interface BeforeInstallPromptEvent extends Event {
@@ -89,6 +117,34 @@ interface BeforeInstallPromptEvent extends Event {
 
 const META_BATCH_SIZE = 80;
 type FolderPickIntent = "open-library" | "refresh-listing";
+type LibraryMode = "videos" | "slideshows";
+
+const LIBRARY_MODE_KEY = "lvl-library-mode";
+const SNAPSHOT_ALBUM_KEY = "lvl-snapshot-album";
+const SLIDESHOW_ALBUM_KEY = "lvl-slideshow-album";
+const FLASH_NOTE_KEY = "lvl-slideshow-flash-note";
+
+function readLibraryMode(): LibraryMode {
+  if (typeof window === "undefined") {
+    return "videos";
+  }
+  return window.localStorage.getItem(LIBRARY_MODE_KEY) === "slideshows"
+    ? "slideshows"
+    : "videos";
+}
+
+function snapshotLabel(item: AlbumItem): string {
+  const sourceName = item.sourcePath.split("/").filter(Boolean).pop();
+  const name = sourceName || item.file;
+  if (!item.sourcePath) {
+    return name;
+  }
+  const safe = Math.max(0, item.sourceTimeSeconds);
+  const minutes = Math.floor(safe / 60);
+  const seconds = Math.floor(safe % 60);
+  const tenths = Math.floor((safe % 1) * 10);
+  return `${name} · ${minutes}:${String(seconds).padStart(2, "0")}.${tenths}`;
+}
 
 export default function App() {
   const folderInputRef = useRef<HTMLInputElement>(null);
@@ -136,6 +192,55 @@ export default function App() {
   const [dialogValue, setDialogValue] = useState("");
   const [installPrompt, setInstallPrompt] =
     useState<BeforeInstallPromptEvent | null>(null);
+  const [libraryMode, setLibraryMode] = useState<LibraryMode>(() => readLibraryMode());
+  const [snapshotRoot, setSnapshotRoot] = useState<FileSystemDirectoryHandle | null>(
+    null,
+  );
+  const [snapshotRootName, setSnapshotRootName] = useState<string | null>(null);
+  const [snapshotNeedsPermission, setSnapshotNeedsPermission] = useState(false);
+  const [albums, setAlbums] = useState<SnapshotAlbumSummary[]>([]);
+  const [destinationAlbum, setDestinationAlbum] = useState<string | null>(() =>
+    typeof window === "undefined"
+      ? null
+      : window.localStorage.getItem(SNAPSHOT_ALBUM_KEY),
+  );
+  const [viewAlbum, setViewAlbum] = useState<string | null>(() =>
+    typeof window === "undefined"
+      ? null
+      : window.localStorage.getItem(SLIDESHOW_ALBUM_KEY),
+  );
+  const [albumItems, setAlbumItems] = useState<AlbumItem[]>([]);
+  const [albumUrls, setAlbumUrls] = useState<Map<string, string>>(new Map());
+  const [albumIntervalMs, setAlbumIntervalMs] = useState(
+    SLIDESHOW_INTERVAL_DEFAULT_MS,
+  );
+  const [albumLoading, setAlbumLoading] = useState(false);
+  const [albumQuery, setAlbumQuery] = useState("");
+  const [snapshotToast, setSnapshotToast] = useState<string | null>(null);
+  const [slideshow, setSlideshow] = useState<{ startIndex: number } | null>(null);
+  const [dialogInterval, setDialogInterval] = useState(SLIDESHOW_INTERVAL_DEFAULT_MS);
+  const [flashNoteDismissed, setFlashNoteDismissed] = useState(() =>
+    typeof window !== "undefined" &&
+    window.localStorage.getItem(FLASH_NOTE_KEY) === "1",
+  );
+  const snapshotRootRef = useRef(snapshotRoot);
+  snapshotRootRef.current = snapshotRoot;
+  const destinationRef = useRef(destinationAlbum);
+  destinationRef.current = destinationAlbum;
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
+  const activeLibraryIdRef = useRef(activeLibraryId);
+  activeLibraryIdRef.current = activeLibraryId;
+  const librariesRef = useRef(libraries);
+  librariesRef.current = libraries;
+  const viewAlbumRef = useRef(viewAlbum);
+  viewAlbumRef.current = viewAlbum;
+  const albumUrlsRef = useRef(albumUrls);
+  albumUrlsRef.current = albumUrls;
+  const captureQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const toastBurstRef = useRef<SnapshotToastBurst | null>(null);
+  const loadSeqRef = useRef(0);
+  const intervalTimerRef = useRef<number | null>(null);
 
   const runScan = useCallback(
     async (
@@ -320,6 +425,137 @@ export default function App() {
     }, 1800);
     return () => window.clearTimeout(timer);
   }, [thumbnailSaved]);
+
+  const refreshAlbums = useCallback(async (root: FileSystemDirectoryHandle) => {
+    try {
+      const list = await listSnapshotAlbums(root);
+      setAlbums(list);
+      setSnapshotNeedsPermission(false);
+      setDestinationAlbum((current) =>
+        current && !list.some((album) => album.name === current) ? null : current,
+      );
+      setViewAlbum((current) =>
+        current && !list.some((album) => album.name === current) ? null : current,
+      );
+      return list;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Could not read snapshots";
+      if (/permission/i.test(message)) {
+        setSnapshotNeedsPermission(true);
+        return [];
+      }
+      setErrorMessage(message);
+      return [];
+    }
+  }, []);
+
+  const loadAlbum = useCallback(
+    async (root: FileSystemDirectoryHandle, name: string) => {
+      const seq = ++loadSeqRef.current;
+      setAlbumLoading(true);
+      try {
+        const { manifest, files } = await readAlbum(root, name);
+        if (seq !== loadSeqRef.current) {
+          return;
+        }
+        const next = new Map<string, string>();
+        for (const item of manifest.items) {
+          const file = files.get(item.file);
+          if (file) {
+            next.set(item.file, URL.createObjectURL(file));
+          }
+        }
+        setAlbumUrls((previous) => {
+          for (const url of previous.values()) {
+            URL.revokeObjectURL(url);
+          }
+          return next;
+        });
+        setAlbumItems(manifest.items);
+        setAlbumIntervalMs(manifest.intervalMs);
+      } catch (error) {
+        if (seq !== loadSeqRef.current) {
+          return;
+        }
+        setErrorMessage(
+          error instanceof Error ? error.message : "Could not open album",
+        );
+      } finally {
+        if (seq === loadSeqRef.current) {
+          setAlbumLoading(false);
+        }
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    window.localStorage.setItem(LIBRARY_MODE_KEY, libraryMode);
+  }, [libraryMode]);
+
+  useEffect(() => {
+    if (destinationAlbum) {
+      window.localStorage.setItem(SNAPSHOT_ALBUM_KEY, destinationAlbum);
+    } else {
+      window.localStorage.removeItem(SNAPSHOT_ALBUM_KEY);
+    }
+  }, [destinationAlbum]);
+
+  useEffect(() => {
+    if (viewAlbum) {
+      window.localStorage.setItem(SLIDESHOW_ALBUM_KEY, viewAlbum);
+    } else {
+      window.localStorage.removeItem(SLIDESHOW_ALBUM_KEY);
+    }
+  }, [viewAlbum]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const root = await loadSnapshotRoot();
+      if (cancelled || !root) {
+        return;
+      }
+      setSnapshotRoot(root);
+      setSnapshotRootName(root.name);
+      await refreshAlbums(root);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshAlbums]);
+
+  useEffect(() => {
+    if (
+      libraryMode !== "slideshows" ||
+      !snapshotRoot ||
+      !viewAlbum ||
+      snapshotNeedsPermission
+    ) {
+      return;
+    }
+    void loadAlbum(snapshotRoot, viewAlbum);
+  }, [libraryMode, snapshotRoot, viewAlbum, snapshotNeedsPermission, loadAlbum]);
+
+  useEffect(() => {
+    if (!snapshotToast) {
+      return;
+    }
+    const timer = window.setTimeout(() => setSnapshotToast(null), 2400);
+    return () => window.clearTimeout(timer);
+  }, [snapshotToast]);
+
+  useEffect(() => {
+    return () => {
+      for (const url of albumUrlsRef.current.values()) {
+        URL.revokeObjectURL(url);
+      }
+      if (intervalTimerRef.current != null) {
+        window.clearTimeout(intervalTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const onInstall = (event: Event) => {
@@ -719,8 +955,289 @@ export default function App() {
     setDialogValue("");
   }
 
+  async function refreshCurrentAlbums() {
+    const root = snapshotRootRef.current;
+    if (!root) {
+      return;
+    }
+    await refreshAlbums(root);
+  }
+
+  async function handleChooseSnapshotFolder() {
+    if (!window.showDirectoryPicker) {
+      return;
+    }
+    try {
+      const handle = await window.showDirectoryPicker({
+        id: "lvl-snapshots",
+        mode: "readwrite",
+        startIn: "pictures",
+      });
+      await saveSnapshotRoot(handle);
+      setSnapshotRoot(handle);
+      snapshotRootRef.current = handle;
+      setSnapshotRootName(handle.name);
+      setSnapshotNeedsPermission(false);
+      setErrorMessage(null);
+      await refreshAlbums(handle);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
+      setErrorMessage(
+        error instanceof Error ? error.message : "Could not open snapshot folder",
+      );
+    }
+  }
+
+  async function handleAllowSnapshots() {
+    const root = snapshotRootRef.current;
+    if (!root) {
+      return;
+    }
+    try {
+      await ensureSnapshotWrite(root);
+      setSnapshotNeedsPermission(false);
+      setErrorMessage(null);
+      await refreshAlbums(root);
+    } catch (error) {
+      setSnapshotNeedsPermission(true);
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Permission is required to save snapshots",
+      );
+    }
+  }
+
+  function noteSnapshotSaved(album: string) {
+    const next = nextSnapshotToast(toastBurstRef.current, album, Date.now());
+    toastBurstRef.current = next;
+    setSnapshotToast(next.message);
+  }
+
+  async function waitIfSeeking(video: HTMLVideoElement): Promise<void> {
+    if (!video.seeking) {
+      return;
+    }
+    await new Promise<void>((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        cleanup();
+        reject(new Error("Could not capture this frame"));
+      }, 4000);
+      const onSeeked = () => {
+        cleanup();
+        resolve();
+      };
+      const cleanup = () => {
+        window.clearTimeout(timer);
+        video.removeEventListener("seeked", onSeeked);
+      };
+      video.addEventListener("seeked", onSeeked);
+    });
+  }
+
+  async function captureToAlbum(video: HTMLVideoElement, albumName: string) {
+    const root = snapshotRootRef.current;
+    const entry = playingRef.current;
+    if (!root) {
+      throw new Error("Choose a folder for snapshots");
+    }
+    if (!entry) {
+      throw new Error("Could not capture this frame");
+    }
+    await waitIfSeeking(video);
+    const blob = await captureVideoFrame(video);
+    const timeSeconds = video.currentTime;
+    const sourcePath = entry.folderPath
+      ? `${entry.folderPath}/${entry.name}`
+      : entry.name;
+    const library = librariesRef.current.find(
+      (item) => item.id === activeLibraryIdRef.current,
+    );
+    const write = async () => {
+      await writeSnapshotImage(root, albumName, {
+        blob,
+        videoBaseName: entry.name,
+        timeSeconds,
+        sourceLibraryId: library?.id,
+        sourceLibraryName: library?.name,
+        sourcePath,
+        capturedAt: new Date().toISOString(),
+      });
+      noteSnapshotSaved(albumName);
+      await refreshAlbums(root);
+    };
+    const run = captureQueueRef.current.then(write, write);
+    captureQueueRef.current = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    await run;
+  }
+
+  async function handleTakeSnapshot(video: HTMLVideoElement) {
+    const album = destinationRef.current;
+    if (!album) {
+      throw new Error("Choose an album");
+    }
+    await captureToAlbum(video, album);
+  }
+
+  async function handlePickSnapshotAlbum(name: string, video: HTMLVideoElement) {
+    setDestinationAlbum(name);
+    destinationRef.current = name;
+    await captureToAlbum(video, name);
+  }
+
+  async function handleCreateSnapshotFromPlayer(
+    name: string,
+    video: HTMLVideoElement,
+  ) {
+    const root = snapshotRootRef.current;
+    if (!root) {
+      throw new Error("Choose a folder for snapshots");
+    }
+    const trimmed = name.trim();
+    await createSnapshotAlbum(root, trimmed, SLIDESHOW_INTERVAL_DEFAULT_MS);
+    setDestinationAlbum(trimmed);
+    destinationRef.current = trimmed;
+    setViewAlbum((current) => current ?? trimmed);
+    await refreshAlbums(root);
+    await captureToAlbum(video, trimmed);
+  }
+
+  function handleViewSnapshotToast() {
+    const album = destinationRef.current;
+    if (album) {
+      setViewAlbum(album);
+    }
+    setLibraryMode("slideshows");
+    setSlideshow(null);
+    setSnapshotToast(null);
+    closePlayer();
+  }
+
+  function handleIntervalChange(ms: number) {
+    const album = viewAlbumRef.current;
+    const root = snapshotRootRef.current;
+    setAlbumIntervalMs(ms);
+    if (album) {
+      setAlbums((current) =>
+        current.map((row) =>
+          row.name === album ? { ...row, intervalMs: ms } : row,
+        ),
+      );
+    }
+    if (intervalTimerRef.current != null) {
+      window.clearTimeout(intervalTimerRef.current);
+    }
+    if (!album || !root) {
+      return;
+    }
+    intervalTimerRef.current = window.setTimeout(() => {
+      void saveAlbumInterval(root, album, ms).catch((error) => {
+        setErrorMessage(
+          error instanceof Error ? error.message : "Could not save interval",
+        );
+      });
+    }, 300);
+  }
+
+  function dismissFlashNote() {
+    window.localStorage.setItem(FLASH_NOTE_KEY, "1");
+    setFlashNoteDismissed(true);
+  }
+
+  function openCreateAlbum() {
+    setErrorMessage(null);
+    setDialog({ type: "create-album" });
+    setDialogValue("");
+    setDialogInterval(SLIDESHOW_INTERVAL_DEFAULT_MS);
+  }
+
+  function openRenameAlbum(name: string) {
+    setErrorMessage(null);
+    setDialog({ type: "rename-album", name });
+    setDialogValue(name);
+  }
+
+  function openDeleteAlbum(name: string, count: number) {
+    setErrorMessage(null);
+    setDialog({ type: "delete-album", name, count });
+    setDialogValue("");
+  }
+
+  function openDeleteSnapshot(album: string, file: string) {
+    setErrorMessage(null);
+    setDialog({ type: "delete-snapshot", album, file });
+    setDialogValue("");
+  }
+
   async function submitDialog() {
-    if (!adapter || !dialog) {
+    if (!dialog) {
+      return;
+    }
+    if (
+      dialog.type === "create-album" ||
+      dialog.type === "rename-album" ||
+      dialog.type === "delete-album" ||
+      dialog.type === "delete-snapshot"
+    ) {
+      const root = snapshotRootRef.current;
+      if (!root) {
+        setErrorMessage("Choose a folder for snapshots");
+        return;
+      }
+      setErrorMessage(null);
+      try {
+        if (dialog.type === "create-album") {
+          const name = dialogValue.trim();
+          await createSnapshotAlbum(root, name, dialogInterval);
+          await refreshAlbums(root);
+          setViewAlbum(name);
+          setDestinationAlbum((current) => current ?? name);
+        } else if (dialog.type === "rename-album") {
+          const nextName = dialogValue.trim();
+          await renameSnapshotAlbum(root, dialog.name, nextName);
+          if (destinationRef.current === dialog.name) {
+            setDestinationAlbum(nextName);
+          }
+          if (viewAlbumRef.current === dialog.name) {
+            setViewAlbum(nextName);
+          }
+          await refreshAlbums(root);
+        } else if (dialog.type === "delete-album") {
+          await deleteSnapshotAlbum(root, dialog.name);
+          if (destinationRef.current === dialog.name) {
+            setDestinationAlbum(null);
+          }
+          if (viewAlbumRef.current === dialog.name) {
+            setViewAlbum(null);
+            setAlbumItems([]);
+            setAlbumUrls((previous) => {
+              for (const url of previous.values()) {
+                URL.revokeObjectURL(url);
+              }
+              return new Map();
+            });
+          }
+          await refreshAlbums(root);
+        } else {
+          await deleteSnapshotImage(root, dialog.album, dialog.file);
+          await refreshAlbums(root);
+          await loadAlbum(root, dialog.album);
+        }
+        setDialog(null);
+        setDialogValue("");
+      } catch (error) {
+        setErrorMessage(
+          error instanceof Error ? error.message : "Operation failed",
+        );
+      }
+      return;
+    }
+    if (!adapter) {
       return;
     }
     switch (dialog.type) {
@@ -764,6 +1281,18 @@ export default function App() {
   const otherLibraries = libraries.filter(
     (library) => library.id !== activeLibraryId,
   );
+  const snapshotCards = useMemo<SnapshotCard[]>(
+    () =>
+      albumItems.flatMap((item) => {
+        const url = albumUrls.get(item.file);
+        if (!url) {
+          return [];
+        }
+        return [{ item, url, label: snapshotLabel(item) }];
+      }),
+    [albumItems, albumUrls],
+  );
+  const overlayOpen = playing != null || slideshow != null || dialog != null;
 
   return (
     <div className="app-shell">
@@ -775,11 +1304,38 @@ export default function App() {
         {...{ webkitdirectory: "", directory: "" }}
         onChange={(event) => void handleFolderInputChange(event)}
       />
-      <aside className="sidebar">
+      <aside className="sidebar" inert={overlayOpen}>
         <div className="sidebar-header">
           <h1>Local Video Library</h1>
           <div className="sidebar-actions">
-            {supportsDirectoryPicker() ? (
+            {libraryMode === "slideshows" ? (
+              <>
+                {supportsDirectoryPicker() ? (
+                  <button
+                    type="button"
+                    className="btn icon outline"
+                    aria-label="Choose snapshot folder"
+                    onClick={() => void handleChooseSnapshotFolder()}
+                  >
+                    <FolderOpen size={16} />
+                  </button>
+                ) : null}
+                {snapshotNeedsPermission ? (
+                  <button type="button" className="btn" onClick={() => void handleAllowSnapshots()}>
+                    Allow access
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="btn icon"
+                  aria-label="Refresh albums"
+                  disabled={!snapshotRoot}
+                  onClick={() => void refreshCurrentAlbums()}
+                >
+                  <RefreshCw size={16} />
+                </button>
+              </>
+            ) : supportsDirectoryPicker() ? (
               <>
                 <button
                   type="button"
@@ -794,6 +1350,16 @@ export default function App() {
                     Re-link folder
                   </button>
                 ) : null}
+                <button
+                  type="button"
+                  className="btn icon"
+                  aria-label="Refresh"
+                  title="Choose this folder again so names Chrome hides are included"
+                  disabled={!adapter || scanning}
+                  onClick={handleRescan}
+                >
+                  <RefreshCw size={16} />
+                </button>
               </>
             ) : (
               <>
@@ -805,21 +1371,40 @@ export default function App() {
                   <FolderInput size={16} />
                   Choose folder
                 </button>
+                <button
+                  type="button"
+                  className="btn icon"
+                  aria-label="Refresh"
+                  title="Choose this folder again so names Chrome hides are included"
+                  disabled={!adapter || scanning}
+                  onClick={handleRescan}
+                >
+                  <RefreshCw size={16} />
+                </button>
               </>
             )}
-            <button
-              type="button"
-              className="btn icon"
-              aria-label="Refresh"
-              title="Choose this folder again so names Chrome hides are included"
-              disabled={!adapter || scanning}
-              onClick={handleRescan}
-            >
-              <RefreshCw size={16} />
-            </button>
           </div>
         </div>
 
+        <div className="mode-switch" role="group" aria-label="Library mode">
+          <button
+            type="button"
+            aria-pressed={libraryMode === "videos"}
+            onClick={() => setLibraryMode("videos")}
+          >
+            Videos
+          </button>
+          <button
+            type="button"
+            aria-pressed={libraryMode === "slideshows"}
+            onClick={() => setLibraryMode("slideshows")}
+          >
+            Slideshows
+          </button>
+        </div>
+
+        {libraryMode === "videos" ? (
+          <>
         {readOnly ? (
           <p className="notice">
             Read-only mode. Rename, move, and delete are disabled.
@@ -930,9 +1515,107 @@ export default function App() {
             ))}
           </div>
         </div>
+          </>
+        ) : (
+          <div className="folder-panel">
+            {snapshotRootName ? (
+              <div className="folder-row active">
+                <div className="folder-item">
+                  <span className="folder-item-name">{snapshotRootName}</span>
+                  <span className="album-row-meta">Snapshot folder</span>
+                </div>
+              </div>
+            ) : null}
+            <div className="folder-panel-header">
+              <h2>Albums</h2>
+              {supportsDirectoryPicker() && snapshotRoot && !snapshotNeedsPermission ? (
+                <button
+                  type="button"
+                  className="btn icon"
+                  aria-label="Create album"
+                  onClick={openCreateAlbum}
+                >
+                  <Plus size={16} />
+                </button>
+              ) : null}
+            </div>
+            <div className="folder-list">
+              {albums.length === 0 ? (
+                <p className="album-row-meta">No albums yet</p>
+              ) : (
+                albums.map((album) => (
+                  <div
+                    key={album.path}
+                    className={`folder-row ${viewAlbum === album.name ? "active" : ""}`}
+                  >
+                    <button
+                      type="button"
+                      className="folder-item"
+                      onClick={() => setViewAlbum(album.name)}
+                    >
+                      <span className="folder-item-name">{album.name}</span>
+                      <span className="album-row-meta">
+                        {album.name === destinationAlbum
+                          ? `Saving here · ${formatInterval(album.intervalMs)}`
+                          : formatInterval(album.intervalMs)}
+                      </span>
+                    </button>
+                    {supportsDirectoryPicker() ? (
+                      <FolderRowMenu
+                        menuLabel="Album options"
+                        onRename={() => openRenameAlbum(album.name)}
+                        onUseForSnapshots={
+                          album.name === destinationAlbum
+                            ? undefined
+                            : () => setDestinationAlbum(album.name)
+                        }
+                        onDelete={() => openDeleteAlbum(album.name, album.count)}
+                      />
+                    ) : null}
+                    <span className="folder-item-count">{album.count}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
       </aside>
 
-      <main className="main-panel">
+      <main className="main-panel" inert={overlayOpen}>
+        {libraryMode === "slideshows" ? (
+          <>
+            {errorMessage ? (
+              <div className="status-bar">
+                <span className="error-text">{errorMessage}</span>
+              </div>
+            ) : null}
+            <SnapshotGallery
+              hasRoot={snapshotRoot != null}
+              needsPermission={snapshotNeedsPermission}
+              canPickFolder={supportsDirectoryPicker()}
+              albumName={viewAlbum}
+              cards={snapshotCards}
+              loading={albumLoading}
+              intervalMs={albumIntervalMs}
+              search={albumQuery}
+              showFlashNote={!flashNoteDismissed}
+              onSearch={setAlbumQuery}
+              onChooseFolder={() => void handleChooseSnapshotFolder()}
+              onAllowAccess={() => void handleAllowSnapshots()}
+              onCreateAlbum={openCreateAlbum}
+              onIntervalChange={handleIntervalChange}
+              onDismissFlashNote={dismissFlashNote}
+              onPlay={() => setSlideshow({ startIndex: 0 })}
+              onOpenAt={(index) => setSlideshow({ startIndex: index })}
+              onDelete={(item) => {
+                if (viewAlbum) {
+                  openDeleteSnapshot(viewAlbum, item.file);
+                }
+              }}
+            />
+          </>
+        ) : (
+          <>
         <header className="toolbar">
           <input
             type="search"
@@ -1184,6 +1867,8 @@ export default function App() {
             ) : null}
           </>
         )}
+          </>
+        )}
       </main>
 
       {playing ? (
@@ -1210,6 +1895,34 @@ export default function App() {
             void handleUseCurrentFrameAsThumbnail(currentTime)
           }
           thumbnailSaved={thumbnailSaved}
+          snapshotsAvailable={supportsDirectoryPicker()}
+          hasSnapshotRoot={snapshotRoot != null}
+          snapshotNeedsPermission={snapshotNeedsPermission}
+          snapshotDestination={destinationAlbum}
+          snapshotAlbums={albums}
+          snapshotToast={snapshotToast}
+          onTakeSnapshot={handleTakeSnapshot}
+          onPickSnapshotAlbum={handlePickSnapshotAlbum}
+          onCreateSnapshotAlbum={handleCreateSnapshotFromPlayer}
+          onChooseSnapshotFolder={() => void handleChooseSnapshotFolder()}
+          onAllowSnapshotAccess={() => void handleAllowSnapshots()}
+          onViewSnapshotToast={handleViewSnapshotToast}
+        />
+      ) : null}
+
+      {slideshow && viewAlbum ? (
+        <SlideshowPlayer
+          albumName={viewAlbum}
+          slides={snapshotCards.map((card) => ({
+            url: card.url,
+            label: card.label,
+          }))}
+          startIndex={slideshow.startIndex}
+          intervalMs={albumIntervalMs}
+          showFlashNote={!flashNoteDismissed}
+          onClose={() => setSlideshow(null)}
+          onIntervalChange={handleIntervalChange}
+          onDismissFlashNote={dismissFlashNote}
         />
       ) : null}
 
@@ -1218,6 +1931,7 @@ export default function App() {
           <div className="dialog" role="dialog" aria-modal="true">
             <h2>{dialogTitle(dialog)}</h2>
             {dialogBody(dialog)}
+            {errorMessage ? <p className="error-text">{errorMessage}</p> : null}
             {dialogNeedsInput(dialog) ? (
               <input
                 className="dialog-input"
@@ -1258,6 +1972,14 @@ export default function App() {
         return "Rename folder";
       case "delete-folder":
         return "Delete folder";
+      case "create-album":
+        return "Create album";
+      case "rename-album":
+        return "Rename album";
+      case "delete-album":
+        return "Delete album";
+      case "delete-snapshot":
+        return "Delete snapshot";
       default:
         return "";
     }
@@ -1292,12 +2014,52 @@ export default function App() {
         return <p>Enter a new folder name without path separators.</p>;
       case "rename-video":
         return <p>Enter a new file name including the extension.</p>;
+      case "create-album":
+        return (
+          <>
+            <p>
+              Albums are folders inside your snapshot directory. The interval is
+              how long each photo stays on screen.
+            </p>
+            <input
+              className="dialog-input"
+              value={dialogValue}
+              aria-label="Album name"
+              placeholder="Album name"
+              autoFocus
+              onChange={(event) => setDialogValue(event.target.value)}
+            />
+            <IntervalSlider value={dialogInterval} onChange={setDialogInterval} />
+          </>
+        );
+      case "rename-album":
+        return <p>Enter a new album name without path separators.</p>;
+      case "delete-album":
+        return (
+          <p>
+            This permanently deletes album "{state.name}" and {state.count} photo(s)
+            from your snapshot folder. This cannot be undone.
+          </p>
+        );
+      case "delete-snapshot":
+        return (
+          <p>
+            This permanently deletes this snapshot from the album folder. This
+            cannot be undone.
+          </p>
+        );
       default:
         return null;
     }
   }
 
   function dialogNeedsInput(state: NonNullable<DialogState>): boolean {
-    return state.type !== "delete-videos" && state.type !== "delete-folder";
+    return (
+      state.type !== "delete-videos" &&
+      state.type !== "delete-folder" &&
+      state.type !== "delete-album" &&
+      state.type !== "delete-snapshot" &&
+      state.type !== "create-album"
+    );
   }
 }

@@ -1,4 +1,9 @@
-export type VideoPlayerKeyAction = "close" | "next" | "prev" | "toggle";
+export type VideoPlayerKeyAction =
+  | "close"
+  | "next"
+  | "prev"
+  | "snapshot"
+  | "toggle";
 
 function isTypingInputType(type: string): boolean {
   return (
@@ -65,6 +70,9 @@ export function videoPlayerKeyAction(
   }
   if (event.key === " " || event.code === "Space") {
     return "toggle";
+  }
+  if (event.key === "s" || event.key === "S") {
+    return "snapshot";
   }
   return null;
 }

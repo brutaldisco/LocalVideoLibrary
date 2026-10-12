@@ -3,12 +3,16 @@ import { useEffect, useRef, useState } from "react";
 
 export function FolderRowMenu({
   onRename,
+  onUseForSnapshots,
   onDelete,
   deleteLabel = "Delete",
+  menuLabel = "Folder options",
 }: {
   onRename?: () => void;
+  onUseForSnapshots?: () => void;
   onDelete: () => void;
   deleteLabel?: string;
+  menuLabel?: string;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -35,7 +39,7 @@ export function FolderRowMenu({
       <button
         type="button"
         className="folder-row-menu-trigger"
-        aria-label="Folder options"
+        aria-label={menuLabel}
         aria-expanded={open}
         aria-haspopup="menu"
         onClick={() => setOpen((current) => !current)}
@@ -55,6 +59,19 @@ export function FolderRowMenu({
               }}
             >
               Rename
+            </button>
+          ) : null}
+          {onUseForSnapshots ? (
+            <button
+              type="button"
+              role="menuitem"
+              className="folder-row-menu-item"
+              onClick={() => {
+                onUseForSnapshots();
+                setOpen(false);
+              }}
+            >
+              Use for new snapshots
             </button>
           ) : null}
           <button
