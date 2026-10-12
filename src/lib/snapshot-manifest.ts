@@ -197,6 +197,45 @@ export function reconcileAlbumManifest(
   };
 }
 
+export function moveAlbumFileOrder(
+  files: readonly string[],
+  fromFile: string,
+  toFile: string,
+): string[] {
+  const from = files.indexOf(fromFile);
+  const to = files.indexOf(toFile);
+  if (from < 0 || to < 0 || from === to) {
+    return [...files];
+  }
+  const next = [...files];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
+}
+
+export function orderAlbumItems(
+  items: readonly AlbumItem[],
+  fileOrder: readonly string[],
+): AlbumItem[] {
+  const byFile = new Map(items.map((item) => [item.file, item]));
+  const ordered: AlbumItem[] = [];
+  const seen = new Set<string>();
+  for (const file of fileOrder) {
+    const item = byFile.get(file);
+    if (!item || seen.has(file)) {
+      continue;
+    }
+    ordered.push(item);
+    seen.add(file);
+  }
+  for (const item of items) {
+    if (!seen.has(item.file)) {
+      ordered.push(item);
+    }
+  }
+  return ordered;
+}
+
 export function serializeAlbumManifest(manifest: AlbumManifest): string {
   const payload: AlbumManifest = {
     version: 1,

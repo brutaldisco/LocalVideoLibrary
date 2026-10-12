@@ -6,6 +6,7 @@ import {
   type AlbumManifest,
   buildSnapshotFileName,
   emptyAlbumManifest,
+  orderAlbumItems,
   parseAlbumManifest,
   reconcileAlbumManifest,
   serializeAlbumManifest,
@@ -355,6 +356,21 @@ export async function writeSnapshotImage(
     items: [...manifest.items.filter((row) => row.file !== file), item],
   });
   return item;
+}
+
+export async function saveSnapshotOrder(
+  root: FileSystemDirectoryHandle,
+  albumName: string,
+  fileOrder: readonly string[],
+): Promise<void> {
+  await ensureSnapshotWrite(root);
+  const dir = await getAlbumDirectory(root, albumName);
+  const fileNames = await listFileNamesInDirectory(dir);
+  const manifest = reconcileAlbumManifest(await readManifestRaw(dir), fileNames);
+  await writeManifest(dir, {
+    ...manifest,
+    items: orderAlbumItems(manifest.items, fileOrder),
+  });
 }
 
 export async function setAlbumInterval(

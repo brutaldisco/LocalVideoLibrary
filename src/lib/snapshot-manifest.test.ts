@@ -3,6 +3,8 @@ import {
   ALBUM_MANIFEST_FILE,
   buildSnapshotFileName,
   isSnapshotImageName,
+  moveAlbumFileOrder,
+  orderAlbumItems,
   parseAlbumManifest,
   reconcileAlbumManifest,
 } from "./snapshot-manifest";
@@ -53,6 +55,43 @@ describe("reconcileAlbumManifest", () => {
       "keep.png",
       "alpha.webp",
       "zebra.jpg",
+    ]);
+  });
+});
+
+describe("moveAlbumFileOrder", () => {
+  const files = ["a.jpg", "b.jpg", "c.jpg"];
+
+  it("moves an item onto another index", () => {
+    expect(moveAlbumFileOrder(files, "a.jpg", "c.jpg")).toEqual([
+      "b.jpg",
+      "c.jpg",
+      "a.jpg",
+    ]);
+    expect(moveAlbumFileOrder(files, "c.jpg", "a.jpg")).toEqual([
+      "c.jpg",
+      "a.jpg",
+      "b.jpg",
+    ]);
+  });
+
+  it("leaves the list unchanged for a missing or identical target", () => {
+    expect(moveAlbumFileOrder(files, "a.jpg", "a.jpg")).toEqual(files);
+    expect(moveAlbumFileOrder(files, "missing.jpg", "b.jpg")).toEqual(files);
+  });
+});
+
+describe("orderAlbumItems", () => {
+  it("reorders known items and keeps the rest at the end", () => {
+    const items = [
+      { file: "a.jpg", capturedAt: "", sourcePath: "a", sourceTimeSeconds: 1 },
+      { file: "b.jpg", capturedAt: "", sourcePath: "b", sourceTimeSeconds: 2 },
+      { file: "c.jpg", capturedAt: "", sourcePath: "c", sourceTimeSeconds: 3 },
+    ];
+    expect(orderAlbumItems(items, ["c.jpg", "a.jpg"]).map((item) => item.file)).toEqual([
+      "c.jpg",
+      "a.jpg",
+      "b.jpg",
     ]);
   });
 });

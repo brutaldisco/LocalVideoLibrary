@@ -67,7 +67,7 @@ import {
 } from "./lib/video-playlist";
 import { folderInputRootName } from "./lib/scan-folder-files";
 import { captureVideoFrame } from "./lib/snapshot-capture";
-import type { AlbumItem } from "./lib/snapshot-manifest";
+import { orderAlbumItems, type AlbumItem } from "./lib/snapshot-manifest";
 import {
   createSnapshotAlbum,
   deleteSnapshotAlbum,
@@ -77,6 +77,7 @@ import {
   loadSnapshotRoot,
   readAlbum,
   renameSnapshotAlbum,
+  saveSnapshotOrder,
   saveSnapshotRoot,
   setAlbumInterval as saveAlbumInterval,
   writeSnapshotImage,
@@ -1144,6 +1145,21 @@ export default function App() {
     }, 300);
   }
 
+  function handleReorderSnapshots(fileOrder: string[]) {
+    const album = viewAlbumRef.current;
+    const root = snapshotRootRef.current;
+    if (!album || !root) {
+      return;
+    }
+    setAlbumItems((current) => orderAlbumItems(current, fileOrder));
+    void saveSnapshotOrder(root, album, fileOrder).catch((error) => {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Could not save snapshot order",
+      );
+      void loadAlbum(root, album);
+    });
+  }
+
   function dismissFlashNote() {
     window.localStorage.setItem(FLASH_NOTE_KEY, "1");
     setFlashNoteDismissed(true);
@@ -1612,6 +1628,7 @@ export default function App() {
                   openDeleteSnapshot(viewAlbum, item.file);
                 }
               }}
+              onReorder={handleReorderSnapshots}
             />
           </>
         ) : (

@@ -1112,10 +1112,10 @@ select {
   white-space: nowrap;
 }
 
-.snapshot-delete {
+.snapshot-delete,
+.snapshot-grip {
   position: absolute;
   top: 8px;
-  right: 8px;
   display: grid;
   place-items: center;
   width: 28px;
@@ -1125,6 +1125,33 @@ select {
   background: rgb(0 0 0 / 55%);
   color: #fff;
   cursor: pointer;
+}
+
+.snapshot-delete {
+  right: 8px;
+}
+
+.snapshot-grip {
+  left: 8px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.snapshot-card.is-dragging {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.video-grid.is-reordering,
+.video-grid.is-reordering .snapshot-open {
+  cursor: grabbing;
+  user-select: none;
+}
+
+@media (pointer: fine) {
+  .snapshot-card .snapshot-open {
+    cursor: grab;
+  }
 }
 
 .snapshot-menu-block {
