@@ -201,8 +201,12 @@ export default function App() {
     [],
   );
 
-  const handleRescan = useCallback(() => {
+  function handleRescan() {
     if (!adapter || scanning) {
+      return;
+    }
+    if (supportsDirectoryPicker() && adapter.mode !== "directory") {
+      void handleOpenDirectory();
       return;
     }
     beginFolderPick(
@@ -210,7 +214,7 @@ export default function App() {
         ? "refresh-listing"
         : "open-library",
     );
-  }, [adapter, scanning]);
+  }
 
   function beginFolderPick(intent: FolderPickIntent) {
     folderPickIntentRef.current = intent;
@@ -222,9 +226,23 @@ export default function App() {
     input.click();
   }
 
-  function handleOpenDirectory() {
+  async function handleOpenDirectory() {
     setErrorMessage(null);
-    beginFolderPick("open-library");
+    try {
+      // showDirectoryPicker() must run in this click turn. A file-input
+      // change event is not a user gesture, and Chrome rejects it.
+      const handle = await pickDirectoryRoot();
+      await refreshLibraries();
+      setPlaying(null);
+      await attachAdapter(createDirectoryAdapter(handle));
+    } catch (error) {
+      if ((error as { name?: string }).name === "AbortError") {
+        return;
+      }
+      setErrorMessage(
+        error instanceof Error ? error.message : "Could not open folder",
+      );
+    }
   }
 
   const attachAdapter = useCallback(
@@ -490,7 +508,7 @@ export default function App() {
     try {
       const handle = await loadSavedRootHandle();
       if (!handle) {
-        await handleOpenDirectory();
+        setErrorMessage("Folder access is not saved. Open the folder again.");
         return;
       }
       const granted = await ensureReadPermission(handle);
@@ -547,28 +565,9 @@ export default function App() {
       return;
     }
 
-    try {
-      const handle = await pickDirectoryRoot();
-      await refreshLibraries();
-      setPlaying(null);
-      if (handle.name !== pickedRoot) {
-        setErrorMessage(
-          `Choose the same folder in both dialogs so names Chrome hides are included. The file list was "${pickedRoot}" and write access was "${handle.name}".`,
-        );
-        await attachAdapter(createDirectoryAdapter(handle));
-        return;
-      }
-      await attachAdapter(createDirectoryAdapter(handle, files));
-    } catch (error) {
-      if ((error as { name?: string }).name === "AbortError") {
-        setPlaying(null);
-        await attachAdapter(createFolderInputAdapter(files));
-        return;
-      }
-      setErrorMessage(
-        error instanceof Error ? error.message : "Could not open folder",
-      );
-    }
+    // showDirectoryPicker() is not allowed from this change event.
+    setPlaying(null);
+    await attachAdapter(createFolderInputAdapter(files));
   }
 
   function toggleSelection(id: string) {

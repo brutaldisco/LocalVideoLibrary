@@ -133,27 +133,47 @@ export async function loadSavedRootHandle(): Promise<FileSystemDirectoryHandle |
   }
 }
 
+function directoryPickerErrorName(error: unknown): string | undefined {
+  return (error as { name?: string }).name;
+}
+
+/** Option mismatches can be retried. Gesture and cancel errors must not open a second picker. */
+function canRetryDirectoryPicker(error: unknown): boolean {
+  const name = directoryPickerErrorName(error);
+  return (
+    name !== "AbortError" &&
+    name !== "NotAllowedError" &&
+    name !== "SecurityError"
+  );
+}
+
+async function rememberPickedDirectory(
+  handle: FileSystemDirectoryHandle,
+): Promise<FileSystemDirectoryHandle> {
+  memoryRoot = handle;
+  await rememberLibrary(handle);
+  return handle;
+}
+
 export async function pickDirectoryRoot(): Promise<FileSystemDirectoryHandle> {
   if (!window.showDirectoryPicker) {
     throw new Error("File System Access API is not supported");
   }
   try {
-    const handle = await window.showDirectoryPicker({
-      id: "lvl",
-      mode: "readwrite",
-      startIn: "videos",
-    });
-    memoryRoot = handle;
-    await rememberLibrary(handle);
-    return handle;
+    return await rememberPickedDirectory(
+      await window.showDirectoryPicker({
+        id: "lvl",
+        mode: "readwrite",
+        startIn: "videos",
+      }),
+    );
   } catch (error) {
-    if ((error as { name?: string }).name === "AbortError") {
+    if (!canRetryDirectoryPicker(error)) {
       throw error;
     }
-    const handle = await window.showDirectoryPicker({ mode: "readwrite" });
-    memoryRoot = handle;
-    await rememberLibrary(handle);
-    return handle;
+    return rememberPickedDirectory(
+      await window.showDirectoryPicker({ mode: "readwrite" }),
+    );
   }
 }
 

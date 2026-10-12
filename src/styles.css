@@ -195,6 +195,12 @@ select {
   font-size: 0.9rem;
 }
 
+.status-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .selection-bar {
   display: flex;
   flex-wrap: wrap;
