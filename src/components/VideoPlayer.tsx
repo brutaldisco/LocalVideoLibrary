@@ -14,9 +14,15 @@ import {
   subscribeFullscreen,
 } from "../lib/video-fullscreen";
 import {
+  loadPlaybackRate,
+  savePlaybackRate,
+} from "../lib/playback-rate";
+import {
+  isPlaybackRateSliderTarget,
   isVideoPlayerTypingTarget,
   videoPlayerKeyAction,
 } from "../lib/video-player-keys";
+import { PlaybackSpeedSlider } from "./PlaybackSpeedSlider";
 import type { RepeatMode } from "../lib/types";
 import {
   parseRepeatMode,
@@ -29,6 +35,19 @@ const SURFACE_CLICK_MS = 220;
 const CONTROL_BAR_PX = 72;
 const IDLE_HIDE_MS = 1000;
 const CHROME_FADE_CLASS = "video-player-chrome-fade";
+
+function applyPlaybackRate(
+  video: HTMLVideoElement | null,
+  rate: number,
+): void {
+  if (!video) {
+    return;
+  }
+  video.defaultPlaybackRate = rate;
+  if (video.playbackRate !== rate) {
+    video.playbackRate = rate;
+  }
+}
 
 function toggleVideoPlayback(video: HTMLVideoElement | null): void {
   if (!video) {
@@ -132,6 +151,9 @@ export function VideoPlayer({
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [shutterOn, setShutterOn] = useState(false);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const [playbackRate, setPlaybackRate] = useState(loadPlaybackRate);
+  const playbackRateRef = useRef(playbackRate);
+  playbackRateRef.current = playbackRate;
   const pickerOpenRef = useRef(false);
   pickerOpenRef.current = pickerOpen;
   const takeSnapshotRef = useRef<() => void>(() => undefined);
@@ -150,7 +172,12 @@ export function VideoPlayer({
     if (el.getAttribute("src") !== url) {
       el.src = url;
     }
+    applyPlaybackRate(el, playbackRateRef.current);
   }, [url]);
+
+  useLayoutEffect(() => {
+    applyPlaybackRate(videoRef.current, playbackRate);
+  }, [playbackRate]);
 
   useEffect(() => {
     function sync() {
@@ -207,6 +234,12 @@ export function VideoPlayer({
       if (isVideoPlayerTypingTarget(event.target)) {
         return;
       }
+      if (
+        (action === "next" || action === "prev") &&
+        isPlaybackRateSliderTarget(event.target)
+      ) {
+        return;
+      }
       if (action === "close") {
         if (isFullscreen()) {
           return;
@@ -239,6 +272,9 @@ export function VideoPlayer({
         return;
       }
       if (isVideoPlayerTypingTarget(event.target)) {
+        return;
+      }
+      if (isPlaybackRateSliderTarget(event.target)) {
         return;
       }
       event.preventDefault();
@@ -689,12 +725,23 @@ export function VideoPlayer({
               "This video could not be played. The file may be missing, moved, or use an unsupported codec.",
             );
           }}
-          onPlay={() => setPaused(false)}
+          onPlay={(event) => {
+            setPaused(false);
+            applyPlaybackRate(event.currentTarget, playbackRateRef.current);
+          }}
           onPause={() => setPaused(true)}
-          onCanPlay={() => setFrameReady(true)}
+          onCanPlay={(event) => {
+            setFrameReady(true);
+            applyPlaybackRate(event.currentTarget, playbackRateRef.current);
+          }}
           onLoadedData={(event) => {
             setFrameReady(true);
-            void event.currentTarget.play().catch(() => undefined);
+            const video = event.currentTarget;
+            applyPlaybackRate(video, playbackRateRef.current);
+            void video
+              .play()
+              .then(() => applyPlaybackRate(video, playbackRateRef.current))
+              .catch(() => undefined);
           }}
           onEnded={() => {
             if (repeat === "one") {
@@ -742,6 +789,33 @@ export function VideoPlayer({
           <IconButton label="Next" disabled={total < 2} onClick={onNext}>
             <SkipForwardIcon />
           </IconButton>
+        </div>
+        <div
+          className="video-player-speed-hold"
+          onFocus={() => {
+            setChromeVisible(true);
+            clearIdleTimer();
+          }}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+              scheduleChromeHide();
+            }
+          }}
+          onPointerDown={() => {
+            setChromeVisible(true);
+            clearIdleTimer();
+          }}
+          onPointerUp={() => scheduleChromeHide()}
+          onPointerCancel={() => scheduleChromeHide()}
+        >
+          <PlaybackSpeedSlider
+            rate={playbackRate}
+            onChange={(rate) => {
+              setPlaybackRate(rate);
+              savePlaybackRate(rate);
+              applyPlaybackRate(videoRef.current, rate);
+            }}
+          />
         </div>
         <div className="video-player-repeat">
           {REPEAT_TOGGLE_MODES.map((mode, modeIndex) => {

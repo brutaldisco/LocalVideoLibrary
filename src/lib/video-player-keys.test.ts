@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { videoPlayerKeyAction } from "./video-player-keys";
+import {
+  isPlaybackRateSliderTarget,
+  videoPlayerKeyAction,
+} from "./video-player-keys";
 
 function keyEvent(
   init: Partial<KeyboardEvent> & Pick<KeyboardEvent, "key">,
@@ -39,5 +42,19 @@ describe("videoPlayerKeyAction", () => {
 
   it("returns null for other keys", () => {
     expect(videoPlayerKeyAction(keyEvent({ key: "a" }))).toBeNull();
+  });
+});
+
+describe("isPlaybackRateSliderTarget", () => {
+  it("matches the speed slider and ignores other controls", () => {
+    const slider = {
+      closest: (selector: string) =>
+        selector === "[data-playback-rate-slider]" ? slider : null,
+    };
+    expect(isPlaybackRateSliderTarget(slider)).toBe(true);
+    expect(
+      isPlaybackRateSliderTarget({ closest: () => null }),
+    ).toBe(false);
+    expect(isPlaybackRateSliderTarget(null)).toBe(false);
   });
 });

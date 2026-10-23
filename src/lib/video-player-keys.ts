@@ -53,6 +53,18 @@ export function isVideoPlayerTypingTarget(target: unknown): boolean {
   return false;
 }
 
+/** Left/right on the speed slider change the rate, not the current video. */
+export function isPlaybackRateSliderTarget(target: unknown): boolean {
+  if (target == null || typeof target !== "object") {
+    return false;
+  }
+  const el = target as { closest?: (selector: string) => unknown };
+  if (typeof el.closest !== "function") {
+    return false;
+  }
+  return el.closest("[data-playback-rate-slider]") != null;
+}
+
 export function videoPlayerKeyAction(
   event: Pick<KeyboardEvent, "key" | "code" | "altKey" | "ctrlKey" | "metaKey">,
 ): VideoPlayerKeyAction | null {
