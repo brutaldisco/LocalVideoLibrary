@@ -8,16 +8,26 @@ import {
 export function PlaybackSpeedSlider({
   rate,
   onChange,
+  compact = false,
 }: {
   rate: number;
   onChange: (rate: number) => void;
+  compact?: boolean;
 }) {
   const index = indexForPlaybackRate(rate);
   const label = formatPlaybackRate(rate);
 
   return (
-    <label className="video-player-speed">
-      <span className="video-player-speed-label">Speed</span>
+    <label
+      className={
+        compact ? "video-player-speed-compact" : "video-player-speed"
+      }
+    >
+      {compact ? (
+        <span className="video-player-speed-compact-label">Speed</span>
+      ) : (
+        <span className="video-player-speed-label">Speed</span>
+      )}
       <input
         className="video-player-speed-slider"
         data-playback-rate-slider=""
@@ -35,7 +45,15 @@ export function PlaybackSpeedSlider({
           onChange(playbackRateAt(Number(event.target.value)));
         }}
       />
-      <span className="video-player-speed-value">{label}</span>
+      <span
+        className={
+          compact
+            ? "video-player-speed-compact-value"
+            : "video-player-speed-value"
+        }
+      >
+        {label}
+      </span>
     </label>
   );
 }

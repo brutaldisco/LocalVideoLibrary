@@ -14,6 +14,7 @@ import {
   subscribeFullscreen,
 } from "../lib/video-fullscreen";
 import {
+  formatPlaybackRate,
   loadPlaybackRate,
   savePlaybackRate,
 } from "../lib/playback-rate";
@@ -139,6 +140,7 @@ export function VideoPlayer({
   const surfaceClickRef = useRef<number | null>(null);
   const idleTimerRef = useRef<number | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const speedWrapRef = useRef<HTMLDivElement>(null);
   const [shellFullscreen, setShellFullscreen] = useState(false);
   const [paused, setPaused] = useState(false);
   const [chromeVisible, setChromeVisible] = useState(true);
@@ -154,6 +156,9 @@ export function VideoPlayer({
   const [playbackRate, setPlaybackRate] = useState(loadPlaybackRate);
   const playbackRateRef = useRef(playbackRate);
   playbackRateRef.current = playbackRate;
+  const [speedOpen, setSpeedOpen] = useState(false);
+  const speedOpenRef = useRef(speedOpen);
+  speedOpenRef.current = speedOpen;
   const pickerOpenRef = useRef(false);
   pickerOpenRef.current = pickerOpen;
   const takeSnapshotRef = useRef<() => void>(() => undefined);
@@ -229,6 +234,12 @@ export function VideoPlayer({
         event.stopPropagation();
         setPickerOpen(false);
         setPickerError(null);
+        return;
+      }
+      if (action === "close" && speedOpenRef.current) {
+        event.preventDefault();
+        event.stopPropagation();
+        setSpeedOpen(false);
         return;
       }
       if (isVideoPlayerTypingTarget(event.target)) {
@@ -314,16 +325,23 @@ export function VideoPlayer({
 
   function onPointerActivity() {
     setChromeVisible(true);
-    if (menuOpen) {
+    if (menuOpen || speedOpen) {
       clearIdleTimer();
       return;
     }
     scheduleChromeHide();
   }
 
+  function setPlaybackSpeed(rate: number) {
+    setPlaybackRate(rate);
+    savePlaybackRate(rate);
+    applyPlaybackRate(videoRef.current, rate);
+  }
+
   useEffect(() => {
     setMenuOpen(false);
     setPickerOpen(false);
+    setSpeedOpen(false);
     setFrameReady(false);
     setSnapshotSaved(false);
     setCaptureError(null);
@@ -338,12 +356,12 @@ export function VideoPlayer({
   }, [snapshotSaved]);
 
   useEffect(() => {
-    if (!menuOpen) {
+    if (!menuOpen && !speedOpen) {
       return;
     }
     setChromeVisible(true);
     clearIdleTimer();
-  }, [menuOpen]);
+  }, [menuOpen, speedOpen]);
 
   useEffect(() => {
     if (!menuOpen) {
@@ -357,6 +375,19 @@ export function VideoPlayer({
     window.addEventListener("mousedown", onPointerDown);
     return () => window.removeEventListener("mousedown", onPointerDown);
   }, [menuOpen]);
+
+  useEffect(() => {
+    if (!speedOpen) {
+      return;
+    }
+    const onPointerDown = (event: MouseEvent) => {
+      if (!speedWrapRef.current?.contains(event.target as Node)) {
+        setSpeedOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", onPointerDown);
+    return () => window.removeEventListener("mousedown", onPointerDown);
+  }, [speedOpen]);
 
   useEffect(() => {
     if (!prefersCoarsePointer()) {
@@ -790,54 +821,60 @@ export function VideoPlayer({
             <SkipForwardIcon />
           </IconButton>
         </div>
-        <div
-          className="video-player-speed-hold"
-          onFocus={() => {
-            setChromeVisible(true);
-            clearIdleTimer();
-          }}
-          onBlur={(event) => {
-            if (!event.currentTarget.contains(event.relatedTarget as Node)) {
-              scheduleChromeHide();
-            }
-          }}
-          onPointerDown={() => {
-            setChromeVisible(true);
-            clearIdleTimer();
-          }}
-          onPointerUp={() => scheduleChromeHide()}
-          onPointerCancel={() => scheduleChromeHide()}
-        >
-          <PlaybackSpeedSlider
-            rate={playbackRate}
-            onChange={(rate) => {
-              setPlaybackRate(rate);
-              savePlaybackRate(rate);
-              applyPlaybackRate(videoRef.current, rate);
-            }}
-          />
-        </div>
-        <div className="video-player-repeat">
-          {REPEAT_TOGGLE_MODES.map((mode, modeIndex) => {
-            const active = repeat === mode.id;
-            return (
-              <IconButton
-                key={mode.id}
-                label={mode.label}
-                tip
-                soft
-                tipAlign={
-                  modeIndex === REPEAT_TOGGLE_MODES.length - 1 ? "end" : "center"
-                }
-                pressed={active}
-                onClick={() =>
-                  onRepeatChange(toggleRepeatMode(repeat, mode.id))
-                }
+        <div className="video-player-bottom-trailing">
+          <div className="video-player-repeat">
+            {REPEAT_TOGGLE_MODES.map((mode, modeIndex) => {
+              const active = repeat === mode.id;
+              return (
+                <IconButton
+                  key={mode.id}
+                  label={mode.label}
+                  tip
+                  soft
+                  tipAlign={
+                    modeIndex === REPEAT_TOGGLE_MODES.length - 1
+                      ? "end"
+                      : "center"
+                  }
+                  pressed={active}
+                  onClick={() =>
+                    onRepeatChange(toggleRepeatMode(repeat, mode.id))
+                  }
+                >
+                  {mode.id === "one" ? <RepeatOneIcon /> : <FolderLoopIcon />}
+                </IconButton>
+              );
+            })}
+          </div>
+          <div className="video-player-speed-wrap" ref={speedWrapRef}>
+            <button
+              type="button"
+              className="video-player-speed-trigger"
+              aria-label="Playback speed"
+              aria-expanded={speedOpen}
+              aria-haspopup="dialog"
+              onClick={() => {
+                setSpeedOpen((open) => !open);
+                setChromeVisible(true);
+                clearIdleTimer();
+              }}
+            >
+              {formatPlaybackRate(playbackRate)}
+            </button>
+            {speedOpen ? (
+              <div
+                className="video-player-speed-overlay"
+                role="dialog"
+                aria-label="Playback speed"
               >
-                {mode.id === "one" ? <RepeatOneIcon /> : <FolderLoopIcon />}
-              </IconButton>
-            );
-          })}
+                <PlaybackSpeedSlider
+                  compact
+                  rate={playbackRate}
+                  onChange={setPlaybackSpeed}
+                />
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
       {shutterOn ? <div className="video-player-shutter is-active" /> : null}

@@ -813,8 +813,9 @@ select {
 
 .video-player-bottom {
   margin-top: auto;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
+  overflow: visible;
 }
 
 .video-player-meta {
@@ -837,17 +838,82 @@ select {
 
 .video-player-top-actions,
 .video-player-nav,
-.video-player-repeat {
+.video-player-repeat,
+.video-player-bottom-trailing {
   display: flex;
   gap: 8px;
   align-items: center;
   flex-wrap: wrap;
 }
 
-.video-player-speed-hold {
-  display: flex;
-  flex: 1 1 180px;
-  min-width: 0;
+.video-player-bottom-trailing {
+  margin-left: auto;
+}
+
+.video-player-speed-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.video-player-speed-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgb(255 255 255 / 25%);
+  background: transparent;
+  color: #fff;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.video-player-speed-trigger:hover {
+  background: rgb(255 255 255 / 10%);
+}
+
+.video-player-speed-trigger[aria-expanded="true"] {
+  background: rgb(255 255 255 / 12%);
+  border-color: rgb(255 255 255 / 35%);
+}
+
+.video-player-speed-overlay {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  z-index: 25;
+  width: min(240px, calc(100vw - 24px));
+  padding: 10px 12px;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 12px;
+  background: rgb(18 18 20 / 96%);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 35%);
+}
+
+.video-player-speed-compact {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  align-items: center;
+  margin: 0;
+  color: #fff;
+}
+
+.video-player-speed-compact-label {
+  font-size: 0.78rem;
+  color: #d1d5db;
+}
+
+.video-player-speed-compact-value {
+  min-width: 2.4rem;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: #fff;
 }
 
 .video-player-speed {
@@ -881,6 +947,10 @@ select {
   accent-color: #fff;
   font-size: 16px;
   touch-action: none;
+}
+
+.video-player-speed-compact .video-player-speed-slider {
+  min-width: 0;
 }
 
 .video-player-menu-wrap {
@@ -1090,6 +1160,12 @@ select {
 
   .video-player-speed-slider {
     min-height: 44px;
+  }
+
+  .video-player-speed-trigger {
+    min-height: 44px;
+    height: 44px;
+    font-size: 16px;
   }
 
   .video-select {
